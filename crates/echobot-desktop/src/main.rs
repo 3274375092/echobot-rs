@@ -16,6 +16,11 @@
 //!
 //! Run:
 //!   ./target/release/echobot-desktop.exe
+//!
+//! If the window doesn't appear, check `.echobot/desktop.log` for
+//! the panic message. With `windows_subsystem = "windows"` a
+//! release build has no console, so without the log file you'd be
+//! flying blind.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -32,16 +37,49 @@ mod first_run;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<()> {
+    install_panic_hook();
     init_tracing();
 
+    if let Err(e) = run().await {
+        // With `windows_subsystem = "windows"` the release build has
+        // no console — anything we `eprintln!` here goes nowhere. Log
+        // the error to a file in the workspace so the user can find
+        // it, and surface a MessageBox via Win32 if we're on Windows.
+        log_fatal(&format!("fatal: {e:?}"));
+        show_message_box(&format!("EchoBot failed to start:\n\n{e}\n\nSee .echobot/desktop.log for details."));
+        return Err(e);
+    }
+    Ok(())
+}
+
+async fn run() -> Result<()> {
+    // Resolve the workspace. When the user double-clicks the
+    // `.exe` in File Explorer, the cwd is not the repo root —
+    // we walk up from the executable looking for `.env` /
+    // `.env.example` to find it.
+    let workspace = first_run::resolve_workspace();
+    if let Err(e) = std::env::set_current_dir(&workspace) {
+        warn!(error = %e, workspace = %workspace.display(), "failed to switch cwd to workspace; continuing from current dir");
+    } else {
+        info!(workspace = %workspace.display(), "using workspace");
+    }
+
     // First-run setup: copy .env.example to .env if .env is missing.
-    let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     if let Err(e) = first_run::ensure_env_file(&workspace).await {
         warn!(error = %e, "first-run .env setup failed (continuing)");
     }
 
     // Load .env (if present) into the process environment.
-    let _ = dotenvy::dotenv();
+    let env_path = workspace.join(".env");
+    if env_path.is_file() {
+        if let Err(e) = dotenvy::from_path(&env_path) {
+            warn!(error = %e, path = %env_path.display(), "failed to load .env");
+        } else {
+            info!(path = %env_path.display(), "loaded .env");
+        }
+    } else {
+        warn!(path = %env_path.display(), ".env not found; LLM provider may fail to construct");
+    }
 
     // Assemble the shared runtime. The Tauri shell reuses the
     // same FullRuntimeContext the `chat` and `app` CLI subcommands
@@ -79,7 +117,7 @@ async fn main() -> Result<()> {
     let bind_addr: std::net::SocketAddr = "127.0.0.1:8765".parse().unwrap();
     let listener = TcpListener::bind(bind_addr)
         .await
-        .with_context(|| format!("failed to bind {bind_addr}"))?;
+        .with_context(|| format!("failed to bind {bind_addr} (is another process using the port?)"))?;
     let local_addr = listener.local_addr().unwrap_or(bind_addr);
     let web_url = format!("http://{}/web", local_addr);
     info!(addr = %local_addr, "EchoBot HTTP server starting (in-process)");
@@ -130,10 +168,72 @@ async fn main() -> Result<()> {
             }
         })
         .run(tauri::generate_context!())
-        .expect("Tauri runtime error");
+        .map_err(|e| anyhow::anyhow!("Tauri runtime error: {e}"))?;
 
     info!("EchoBot desktop exiting; was serving at {}", url_for_status);
     Ok(())
+}
+
+/// Install a panic hook that writes to `.echobot/desktop.log` in
+/// addition to the default stderr hook. Without this, a panic in
+/// a release build (which has no console) is invisible.
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = format!("PANIC: {info}\n");
+        log_fatal(&msg);
+        default_hook(info);
+    }));
+}
+
+/// Append a line to `.echobot/desktop.log`, creating the directory
+/// if needed. Best-effort: never panics itself.
+fn log_fatal(msg: &str) {
+    let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let dir = workspace.join(".echobot");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("desktop.log");
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(f, "{}", msg);
+    }
+}
+
+/// Show a native message box on Windows (no-op elsewhere). Uses
+/// the `MessageBoxW` Win32 API so it works even with no console.
+#[cfg(target_os = "windows")]
+fn show_message_box(msg: &str) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    extern "system" {
+        fn MessageBoxW(
+            hwnd: *mut std::ffi::c_void,
+            text: *const u16,
+            caption: *const u16,
+            utype: u32,
+        ) -> i32;
+    }
+    let wide_msg: Vec<u16> = OsStr::new(msg).encode_wide().chain(Some(0)).collect();
+    let wide_caption: Vec<u16> =
+        OsStr::new("EchoBot").encode_wide().chain(Some(0)).collect();
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            wide_msg.as_ptr(),
+            wide_caption.as_ptr(),
+            0x10, // MB_ICONERROR
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_message_box(_msg: &str) {
+    // No-op on non-Windows targets; the panic hook's log file is
+    // the only diagnostic on those platforms.
 }
 
 fn init_tracing() {
