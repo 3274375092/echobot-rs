@@ -14,6 +14,16 @@ Build the workspace:
 cargo check --workspace
 ```
 
+Configure the LLM provider — copy the template and fill in your key:
+
+```shell
+cp .env.example .env
+# then edit .env: set LLM_API_KEY and LLM_MODEL (LLM_BASE_URL if non-OpenAI)
+```
+
+See `.env.example` for the full list of supported variables (provider presets
+for DeepSeek / SiliconFlow / Ollama / vLLM are included as commented blocks).
+
 Run the CLI (scaffold only — subcommands are stubs):
 
 ```shell

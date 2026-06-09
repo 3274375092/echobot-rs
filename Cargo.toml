@@ -30,3 +30,17 @@ dotenvy = "0.15"
 base64 = "0.22"
 mime = "0.3"
 toml = "0.8"
+axum = { version = "0.7", default-features = false, features = ["json", "multipart", "tokio", "http1"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+hyper = { version = "1" }
+hound = { version = "3.5" }
+symphonia = { version = "0.5", features = ["all"] }
+parking_lot = "0.12"
+include_dir = "0.7"
+mime_guess = "2"
+echobot-core = { path = "crates/echobot-core" }
+echobot-runtime = { path = "crates/echobot-runtime" }
+echobot-orchestration = { path = "crates/echobot-orchestration" }
+echobot-tts = { path = "crates/echobot-tts" }
+echobot-asr = { path = "crates/echobot-asr" }
