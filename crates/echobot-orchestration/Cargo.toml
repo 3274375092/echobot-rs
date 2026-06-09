@@ -1,0 +1,21 @@
+[package]
+name = "echobot-orchestration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+echobot-core = { path = "../echobot-core" }
+echobot-runtime = { path = "../echobot-runtime" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+regex = { workspace = true }
+uuid = { workspace = true }
+dashmap = { workspace = true }

@@ -1,0 +1,22 @@
+[package]
+name = "echobot-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "echobot"
+path = "src/main.rs"
+
+[dependencies]
+echobot-core = { path = "../echobot-core" }
+echobot-runtime = { path = "../echobot-runtime" }
+echobot-orchestration = { path = "../echobot-orchestration" }
+
+clap = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
