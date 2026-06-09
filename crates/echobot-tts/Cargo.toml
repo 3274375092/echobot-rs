@@ -39,6 +39,12 @@ once_cell = { workspace = true }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 url = "2"
 
+# Edge TTS DRM: Microsoft requires a SHA-256 `Sec-MS-GEC` token derived
+# from a Windows FILETIME tick rounded to a 5-minute window, plus a
+# 32-hex `ConnectionId`. Both must sit in the WSS URL query string.
+sha2 = "0.10"
+uuid = { workspace = true }
+
 [features]
 # Default feature set: Edge + OpenAI-compatible. Kokoro is opt-in for phase 3.
 default = []

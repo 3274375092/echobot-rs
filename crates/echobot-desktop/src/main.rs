@@ -38,6 +38,7 @@ mod first_run;
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<()> {
     install_panic_hook();
+    init_rustls();
     init_tracing();
 
     if let Err(e) = run().await {
@@ -234,6 +235,12 @@ fn show_message_box(msg: &str) {
 fn show_message_box(_msg: &str) {
     // No-op on non-Windows targets; the panic hook's log file is
     // the only diagnostic on those platforms.
+}
+
+fn init_rustls() {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("failed to install rustls aws-lc-rs crypto provider");
 }
 
 fn init_tracing() {

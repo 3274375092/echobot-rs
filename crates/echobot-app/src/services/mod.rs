@@ -20,4 +20,4 @@ pub mod web_console;
 pub use delivery::DeliveryStore;
 pub use route_sessions::RouteSessionStore;
 pub use session_service::SessionService;
-pub use web_console::{Live2DUploadFile, WebConsoleService};
+pub use web_console::{live2d::UploadFile as Live2DUploadFile, WebConsoleService};

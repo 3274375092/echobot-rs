@@ -34,6 +34,9 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("failed to install rustls aws-lc-rs crypto provider");
     init_tracing();
     let cli = Cli::parse();
     match cli.command {

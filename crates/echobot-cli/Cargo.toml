@@ -37,6 +37,7 @@ futures = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
+rustls = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 hyper = { workspace = true }

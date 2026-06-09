@@ -26,8 +26,13 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 bytes = { workspace = true }
 mime_guess = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }
 include_dir = { workspace = true }
 dotenvy = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
 async-stream = "0.3"
+
+[dev-dependencies]
+reqwest = { workspace = true }

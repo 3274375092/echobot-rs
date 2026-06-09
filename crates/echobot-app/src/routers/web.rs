@@ -33,8 +33,13 @@ pub fn router() -> Router<AppState> {
     // handled by `create_app::fallback(serve_static)`. The brace-prefix
     // catch-all syntax `{*name}` is rejected by matchit 0.7 (the
     // version bundled with axum 0.7.9) once any sibling route is
-    // registered, so we keep the router to its explicit API endpoints
-    // and let the top-level fallback dispatch asset requests.
+    // registered, so we nest a sub-router for the Live2D asset
+    // catch-all that has no siblings.
+    let live2d_assets = Router::new()
+        .route("/*rest", get(get_live2d_asset));
+    let stage_assets = Router::new()
+        .route("/*rest", get(get_stage_background));
+
     Router::new()
         .route("/config", get(get_web_config))
         .route("/runtime", patch(update_web_runtime))
@@ -42,7 +47,9 @@ pub fn router() -> Router<AppState> {
         .route("/live2d", post(upload_live2d).get(get_live2d_index))
         .route("/live2d/annotations", patch(update_live2d_annotation))
         .route("/live2d/hotkeys", patch(update_live2d_hotkey))
+        .nest("/live2d", live2d_assets)
         .route("/stage/backgrounds", post(upload_stage_background))
+        .nest("/stage/backgrounds", stage_assets)
         .route("/tts/voices", get(get_tts_voices))
         .route("/tts", post(synthesize_tts))
         .route("/asr/status", get(get_asr_status))
@@ -207,7 +214,7 @@ async fn upload_live2d(
 ) -> Result<Json<WebLive2DConfigModel>, AppError> {
     let console = web_console(&state)
         .ok_or_else(|| AppError::Unavailable("Web console service is not ready".to_string()))?;
-    let mut uploaded: Vec<crate::services::web_console::Live2DUploadFile> = Vec::new();
+    let mut uploaded: Vec<crate::services::Live2DUploadFile> = Vec::new();
     let mut relative_paths: Vec<String> = Vec::new();
     while let Some(mut field) = multipart
         .next_field()
@@ -225,7 +232,7 @@ async fn upload_live2d(
                 bytes.extend_from_slice(&chunk);
             }
             let placeholder = field.file_name().unwrap_or("").to_string();
-            uploaded.push(crate::services::web_console::Live2DUploadFile {
+            uploaded.push(crate::services::Live2DUploadFile {
                 relative_path: placeholder,
                 file_bytes: bytes,
             });
@@ -293,31 +300,37 @@ async fn update_live2d_hotkey(
     Ok(Json(value))
 }
 
-async fn get_live2d_index() -> Result<Response, AppError> {
-    Err(AppError::NotFound(
-        "Live2D model list is not enabled in v1".to_string(),
-    ))
+async fn get_live2d_index(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, AppError> {
+    let console = web_console(&state)
+        .ok_or_else(|| AppError::Unavailable("Web console service is not ready".to_string()))?;
+    Ok(Json(console.live2d_config()))
 }
 
-// Kept for future use: the live2d asset fetchers are not currently
-// wired into the router (the v1 web console has live2d metadata but
-// does not yet serve the binary assets directly). They are part of the
-// established public surface and will be enabled in a follow-up.
-#[allow(dead_code)]
 async fn get_live2d_asset(
     State(state): State<AppState>,
     Path(asset_path): Path<String>,
 ) -> Result<Response, AppError> {
-    get_live2d_asset_inner(state, &asset_path).await
-}
-
-#[allow(dead_code)]
-async fn get_live2d_asset_inner(
-    state: AppState,
-    asset_path: &str,
-) -> Result<Response, AppError> {
+    let asset_path = asset_path.trim_start_matches('/');
     let console = web_console(&state)
         .ok_or_else(|| AppError::Unavailable("Web console service is not ready".to_string()))?;
+
+    // For .model3.json files, render with metadata patches (matching Python)
+    if asset_path.ends_with(".model3.json") {
+        let model_json = console
+            .render_live2d_model_json(asset_path)
+            .await;
+        if !model_json.is_empty() {
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
+                .body(Body::from(model_json))
+                .map_err(|e| AppError::Internal(e.to_string()))?);
+        }
+    }
+
+    // For all other files, serve raw bytes from disk
     let asset = console
         .resolve_live2d_asset(asset_path)
         .map_err(AppError::BadRequest)?;
@@ -329,19 +342,11 @@ async fn get_live2d_asset_inner(
         .into_response())
 }
 
-#[allow(dead_code)]
 async fn get_stage_background(
     State(state): State<AppState>,
     Path(asset_path): Path<String>,
 ) -> Result<Response, AppError> {
-    get_stage_background_inner(state, &asset_path).await
-}
-
-#[allow(dead_code)]
-async fn get_stage_background_inner(
-    state: AppState,
-    asset_path: &str,
-) -> Result<Response, AppError> {
+    let asset_path = asset_path.trim_start_matches('/');
     let console = web_console(&state)
         .ok_or_else(|| AppError::Unavailable("Web console service is not ready".to_string()))?;
     let asset = console

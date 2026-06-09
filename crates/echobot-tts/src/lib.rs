@@ -4,7 +4,8 @@
 //! trait-based provider abstraction and three concrete providers:
 //!
 //! * [`providers::edge::EdgeTtsProvider`]             — Microsoft Edge
-//!   "read aloud" WebSocket API (free, no auth).
+//!   "read aloud" WebSocket API (free, requires the Sec-MS-GEC DRM
+//!   token that Microsoft started enforcing in mid-2024).
 //! * [`providers::openai_compatible::OpenAICompatibleTtsProvider`]
 //!   — any OpenAI `/audio/speech`-compatible HTTP endpoint.
 //! * [`providers::kokoro::KokoroTtsProvider`]         — STUB behind the

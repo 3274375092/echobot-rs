@@ -2,19 +2,20 @@
 //!
 //! Mirrors the Python `edge-tts` package's WebSocket protocol against
 //! `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1`.
-//! The service is free and unauthenticated; we send a config + speak
-//! request, then collect audio binary frames until the server closes.
+//! The service is free but NOT unauthenticated: since mid-2024 Microsoft
+//! returns HTTP 401 on the WebSocket upgrade unless the URL query string
+//! carries a fresh `Sec-MS-GEC` DRM token plus `Sec-MS-GEC-Version` and
+//! `TrustedClientToken`. See [`generate_sec_ms_gec`].
 //!
 //! Protocol overview (1:1 with `edge-tts`):
 //!
-//! 1. Connect with `Sec-WebSocket-Protocol: websocket-bing-tts-protocol`.
-//! 2. Send `X-TimestampPath` header on the HTTP upgrade (it carries no
-//!    meaningful value but the server rejects requests that omit it).
-//! 3. Send a `speech.config` JSON message to declare voice / format.
-//! 4. Send a `ssml` message that wraps the text in `<speak version="1.0"
+//! 1. Connect to `<WSS_URL>?TrustedClientToken=...&ConnectionId=...&Sec-MS-GEC=...&Sec-MS-GEC-Version=...`
+//!    with `Sec-WebSocket-Protocol: websocket-bing-tts-protocol`.
+//! 2. Send a `speech.config` JSON message to declare voice / format.
+//! 3. Send an `ssml` message that wraps the text in `<speak version="1.0"
 //!    xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="...">` and
 //!    contains a single `<voice name="...">` element.
-//! 5. Receive a stream of `Path: audio` binary messages and
+//! 4. Receive a stream of `Path: audio` binary messages and
 //!    `Path: turn.end` text messages. Concatenate the binaries in order.
 //!
 //! This implementation favours clarity over micro-optimisation. It uses
@@ -25,11 +26,13 @@
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
-use std::time::Duration;
+use sha2::{Digest, Sha256};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, warn};
+use uuid::Uuid;
 
 use crate::base::{
     TtsAudio, TtsError, TtsProvider, TtsProviderStatus, TtsSynthesisOptions, VoiceOption,
@@ -43,10 +46,24 @@ const EDGE_WSS_URL: &str =
 /// Sub-protocol token the Edge service requires.
 const EDGE_WSS_SUBPROTOCOL: &str = "websocket-bing-tts-protocol";
 
-/// Trust-Client-Token header value: the well-known public token used by
-/// the official `edge-tts` client.
-const EDGE_TRUST_TOKEN: &str =
-    "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+/// Public, well-known token shipped by the official `edge-tts` client.
+/// Microsoft uses it as the salt for the Sec-MS-GEC SHA-256 hash AND
+/// echoes it back in the `TrustedClientToken` URL parameter.
+const TRUSTED_CLIENT_TOKEN: &str = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+
+/// Bumped in lock-step with the Chromium major embedded in Edge. The
+/// upstream `edge-tts` library currently pins this string; the server
+/// rejects requests that omit or mangle it.
+const SEC_MS_GEC_VERSION: &str = "1-130.0.2849.68";
+
+/// Seconds between the Windows file-time epoch (1601-01-01 UTC) and the
+/// Unix epoch (1970-01-01 UTC). Used to derive Sec-MS-GEC ticks.
+const WIN_FILETIME_EPOCH_OFFSET_SECS: u64 = 11_644_473_600;
+
+/// Edge desktop UA the server expects.
+const EDGE_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 
 /// Connection / response timeout (seconds). Edge TTS usually responds
 /// in well under this.
@@ -153,8 +170,31 @@ impl EdgeTtsProvider {
 
     /// Connect to the Edge service. Returns a configured WebSocket stream
     /// with the sub-protocol set.
+    ///
+    /// Authentication (HTTP 401 if any of these are missing or stale):
+    /// * `TrustedClientToken` — the public token in the URL query.
+    /// * `Sec-MS-GEC`         — SHA-256 over `<filetime-ticks><token>`,
+    ///                          rounded to the current 5-minute window.
+    /// * `Sec-MS-GEC-Version` — pinned Chromium-embedded version string.
+    /// * `ConnectionId`       — a 32-hex per-connection identifier.
     async fn connect(&self) -> Result<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, TtsError> {
-        let mut request = EDGE_WSS_URL
+        let connection_id = generate_connection_id();
+        let sec_ms_gec = generate_sec_ms_gec()
+            .map_err(|e| TtsError::network(format!("Edge TTS DRM token failed: {e}")))?;
+
+        // Auth params travel in the URL query — header-based auth
+        // (`Trust-Client-Token`) was retired by Microsoft in 2024 and now
+        // gets the upgrade rejected with 401 Unauthorized.
+        let url = format!(
+            "{EDGE_WSS_URL}\
+             ?TrustedClientToken={TRUSTED_CLIENT_TOKEN}\
+             &ConnectionId={connection_id}\
+             &Sec-MS-GEC={sec_ms_gec}\
+             &Sec-MS-GEC-Version={SEC_MS_GEC_VERSION}"
+        );
+
+        let mut request = url
+            .as_str()
             .into_client_request()
             .map_err(|e| TtsError::network(format!("failed to build WS request: {e}")))?;
         request.headers_mut().insert(
@@ -179,20 +219,13 @@ impl EdgeTtsProvider {
             "Accept-Language",
             "en-US,en;q=0.9".parse().expect("hardcoded header is valid"),
         );
-        request
-            .headers_mut()
-            .insert("X-Edge-Origin", "msedge-tts".parse().unwrap());
         request.headers_mut().insert(
-            "X-Timestamp",
-            chrono_like_timestamp().parse().expect("hardcoded header is valid"),
+            "User-Agent",
+            EDGE_USER_AGENT.parse().expect("hardcoded header is valid"),
         );
         request.headers_mut().insert(
             "Sec-WebSocket-Protocol",
             EDGE_WSS_SUBPROTOCOL.parse().unwrap(),
-        );
-        request.headers_mut().insert(
-            "Trust-Client-Token",
-            EDGE_TRUST_TOKEN.parse().expect("hardcoded header is valid"),
         );
 
         let connect_future = connect_async(request);
@@ -220,9 +253,9 @@ impl EdgeTtsProvider {
         let config_msg = self.build_config_message();
         let ssml = self.build_ssml(text, voice, options);
 
-        // `mktts-` is a marker that lets the server correlate the two
-        // messages. We pick a stable short tag (millisecond timestamp).
-        let request_id = format!("mktts-{}", chrono_like_timestamp());
+        // 32-hex per-request marker that lets the server correlate the
+        // two messages. Edge uses a UUID with the dashes stripped.
+        let request_id = generate_connection_id();
 
         // 1. speech.config
         let config_frame = format!(
@@ -420,6 +453,7 @@ fn xml_escape(s: &str) -> String {
 
 /// Cheap "now-ish" timestamp string used as a request marker. We avoid
 /// pulling `chrono` into the dep list for this one usage.
+#[allow(dead_code)] // kept for potential future X-Timestamp use
 fn chrono_like_timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let dur = SystemTime::now()
@@ -428,6 +462,49 @@ fn chrono_like_timestamp() -> String {
     let secs = dur.as_secs();
     let millis = dur.subsec_millis();
     format!("{}{:03}Z", secs, millis)
+}
+
+/// Generate a fresh 32-hex `ConnectionId` / `X-RequestId`. Mirrors the
+/// Python `connect_id()` helper (`uuid.uuid4().hex`).
+fn generate_connection_id() -> String {
+    Uuid::new_v4().simple().to_string()
+}
+
+/// Compute the `Sec-MS-GEC` DRM token Microsoft started requiring on the
+/// Edge read-aloud WebSocket in mid-2024. Without it the upgrade returns
+/// HTTP 401 Unauthorized.
+///
+/// Algorithm (matches `edge_tts.drm.generate_sec_ms_gec`):
+///
+/// 1. Take the current Unix time in seconds.
+/// 2. Offset to the Windows file-time epoch (1601-01-01 UTC).
+/// 3. Round DOWN to the nearest 5-minute (300s) boundary so a token is
+///    valid for ~5 minutes on each side of clock skew.
+/// 4. Convert seconds → 100-nanosecond ticks (`* 10_000_000`).
+/// 5. SHA-256 over `<ticks><TRUSTED_CLIENT_TOKEN>`, hex-encode UPPERCASE.
+fn generate_sec_ms_gec() -> Result<String, &'static str> {
+    let unix_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "system clock is before Unix epoch")?
+        .as_secs();
+    let win_secs = unix_secs
+        .checked_add(WIN_FILETIME_EPOCH_OFFSET_SECS)
+        .ok_or("filetime overflow")?;
+    let rounded_secs = win_secs - (win_secs % 300);
+    let ticks_100ns = rounded_secs
+        .checked_mul(10_000_000)
+        .ok_or("filetime tick overflow")?;
+
+    let to_hash = format!("{ticks_100ns}{TRUSTED_CLIENT_TOKEN}");
+    let digest = Sha256::digest(to_hash.as_bytes());
+
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        // Uppercase hex, two chars per byte. Microsoft compares
+        // case-sensitively so we MUST upper-case.
+        out.push_str(&format!("{byte:02X}"));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -484,5 +561,29 @@ mod tests {
     fn find_double_crlf_missing_returns_none() {
         let bytes = b"no separator here";
         assert!(find_double_crlf(bytes).is_none());
+    }
+
+    #[test]
+    fn connection_id_is_32_lowercase_hex() {
+        let id = generate_connection_id();
+        assert_eq!(id.len(), 32);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn sec_ms_gec_is_64_uppercase_hex() {
+        let token = generate_sec_ms_gec().expect("DRM token must compute");
+        assert_eq!(token.len(), 64, "SHA-256 hex must be 64 chars");
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
+    }
+
+    #[test]
+    fn sec_ms_gec_is_stable_within_a_5min_window() {
+        // Two back-to-back calls inside the same 300s window MUST be
+        // bit-identical — the token's whole point is being cacheable
+        // across multiple connections from one client.
+        let a = generate_sec_ms_gec().unwrap();
+        let b = generate_sec_ms_gec().unwrap();
+        assert_eq!(a, b);
     }
 }
