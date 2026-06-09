@@ -318,31 +318,155 @@ cargo build -p echobot-asr --features sherpa-rs
 **Clippy status:** `cargo clippy --workspace --all-targets -- -D
 warnings` is clean — the workspace builds with zero warnings.
 
+## Phase 4 Audit (2026-06-10)
+
+Before scoping phase 4 work, the entire Rust port was audited 1:1
+against the Python original. The full report — including per-finding
+`file:line` evidence and the 8 false positives the verify stage
+caught — lives in [`AUDIT.md`](AUDIT.md).
+
+**Headline result:** 12 of 18 backend subsystems at full parity, 4
+partial, 2 entirely missing. The web SPA is byte-identical
+(168 files, MD5-verified). Total confirmed gaps: ~50
+(8 blockers, ~25 major, ~12 minor, ~5 cosmetic).
+
+| Severity | Where it hurts | Examples |
+|---|---|---|
+| **Blocker** | A documented feature can't run end-to-end. | Image upload only accepts pre-encoded JPEG; LLM streaming silently swallows API errors; Silero VAD is trait-only; channels subsystem is entirely absent. |
+| **Major** | A specific code path is wrong or returns dummy data. | Chat router drops image/file attachments; ASR websocket is a v1 stub; CronService run loop has no panic guard; REPL slash commands have no subcommand dispatch. |
+| **Minor** | Worth a follow-up commit, no user impact today. | `ToolRegistryLike` only exposes `names()`; `SkillRegistry.has_skills()` missing; `--verbose` flag accepted but unwired. |
+| **Cosmetic** | Doc / format / naming drift, no functional impact. | Stale module docstrings; JSON ASCII-escape differences; missing Python aliases. |
+
+### Re-running the audit
+
+The audit is reproducible — same script + same args returns the same
+findings (each pipeline stage is cached on the prompt hash). The
+methodology:
+
+1. **Fan out per subsystem.** 18 backend audits + 3 frontend audits
+   running independently as `Explore` agents. Each is told to compare
+   one Python module against its Rust counterpart and return a
+   structured `FINDING` object (gaps, severity, parity table).
+2. **Adversarially verify each finding.** Every flagged gap is passed
+   to a second agent that tries to *refute* it. Default to
+   `rejected` unless concrete file:line evidence confirms the gap.
+   This caught 8 false positives — see the "Notes / non-gaps"
+   section of `AUDIT.md`.
+3. **Synthesize one report.** A final agent consumes the verified
+   verdicts and produces the parity table + sorted blocker list.
+
+Stats from the 2026-06-10 run: 38 agents, 545 tool calls, ~1.06M
+tokens, ~6 minutes wall time. Re-run with the same Workflow script
+(saved under
+`.claude/projects/D--code----echobot-rs/<session>/workflows/scripts/audit-rust-port-vs-python-*.js`)
+or recreate from scratch using the same fan-out → verify → synthesize
+shape.
+
 ## Next Steps (Phase 4 / v2)
 
-The v1 feature set is locked. v2 is parked until product pull. The
-remaining items the Rust port has not yet tackled (and is therefore
-not in scope for the v1 cut) are:
+The v1 feature set is locked. Phase 4 priorities below are derived
+from the 2026-06-10 audit and re-ordered by **value per hour** rather
+than by audit appearance order. See `AUDIT.md` for the full gap list
+with file:line evidence; the tiers below collect the items that
+actually move the needle.
 
-1. **Long-term memory.** Replace `NoopMemorySupport` with a real
-   memory back-end (ReMeLight via pyo3, or a self-rolled `sled` +
-   `sqlite-vec` + `tiktoken-rs` stack). Wire it into the runtime and
-   the `MemoryTool` so the LLM can read and write long-term notes.
-2. **QQ / Telegram channels.** Land the multi-channel gateway in
-   the `gateway` subcommand: per-platform adapters, a channel manager
-   that reads `.echobot/channels.json`, and a delivery loop that
-   pushes responses back through the coordinator.
-3. **Auto-generated skill scripts.** Extend `SkillRegistry` to
-   generate skill scripts from conversational data (mirror the
-   Python `SkillRegistry.autogen_*` helpers) and add a CLI command
-   to trigger generation.
-4. **Local TTS.** Wire the Kokoro TTS provider on top of `sherpa-rs`
-   (or a similar local TTS engine). The feature gate and provider
-   trait surface already exist; only the implementation is missing.
-5. **First-class Anthropic client.** Add a non-OpenAI-compatible
-   provider in `echobot-providers` so the runtime can talk to
-   Anthropic without going through an OpenAI-style proxy.
-6. **Per-channel delivery hardening.** The `app` HTTP server's ASR
-   websocket currently creates a new session per binary frame; v2
-   should hold a long-lived session across the lifetime of a
-   websocket connection.
+### Tier 1 — Correctness & safety (1 day total)
+
+These are small, surgical fixes that prevent invisible production
+failures or unlock common user flows.
+
+1. **Replace the image normalization stub.** `crates/echobot-core/src/images.rs:179-211`
+   only accepts pre-encoded JPEGs. Wire the `image` crate to decode
+   arbitrary PNG / GIF / WEBP, exif-transpose, resize, and re-encode
+   JPEG. Fix `create_image_attachment` (`attachments.rs:449-450`) to
+   use real decoded dimensions instead of `max_side` for both
+   width and height. *~half a day.*
+2. **Fix LLM streaming error propagation.** `crates/echobot-providers/src/openai_compatible.rs:395-405`
+   (`stream_text_chunks`) currently logs and returns on HTTP errors /
+   send failures. `parse_sse_line` at lines 721-728 returns `None` for
+   API error payloads. Both should propagate `Err(ProviderError::HttpStatus)`
+   to match Python's `RuntimeError` behaviour. *~1 hour, affects every
+   user.*
+3. **Wire the real runtime bootstrap.** `crates/echobot-runtime/src/bootstrap.rs:129,148`
+   hardcodes `delegated_ack_enabled = true` and `max_steps = 24`.
+   Replace with reads of `ECHOBOT_DELEGATED_ACK_ENABLED` /
+   `ECHOBOT_AGENT_MAX_STEPS`. Instantiate `coordinator /
+   role_registry / memory_support / tool_registry_factory` in
+   `RuntimeContext` instead of leaving them `None`. *~2 hours.*
+4. **Add panic guard to `CronService::run_loop`.** `crates/echobot-runtime/src/scheduling/cron.rs:951-953`
+   crashes the scheduler on any executor panic; Python catches and
+   continues. Wrap with `catch_unwind` (or per-task `tokio::spawn` +
+   `JoinError` handling) so a single bad job doesn't take down the
+   service. *~30 minutes.*
+
+### Tier 2 — Largest missing functionality
+
+Multi-day projects that close the biggest gaps.
+
+5. **Channels + gateway subsystem.** *Largest single gap.* Implement
+   `MessageBus`, `BaseChannel`, `ChannelManager`, `ChannelConfig`
+   loading, and at least `ConsoleChannel` plus one bot adapter
+   (Telegram recommended). Wire `crates/echobot-cli/src/gateway.rs`
+   to actually start a `GatewayRuntime`, instantiate the bus, and run
+   the message loop. Port the three gateway services:
+   `DeliveryStore` (5 methods), `RouteSessionStore` (9 methods),
+   `GatewaySessionService` (11 async methods). *~1 week.*
+6. **Long-term memory.** Replace `NoopMemorySupport` with a real
+   back-end (ReMeLight via pyo3, or a self-rolled `sled` +
+   `sqlite-vec` + `tiktoken-rs` stack). Port `compact_history` and
+   `remember_turn`. Wire into the runtime and `MemoryTool`. *~3-4
+   days.*
+7. **`SessionLifecycleService`.** Port the Python `session_service.py`
+   methods (`list_sessions`, `load_or_create_session`,
+   `switch_session`, `rename`, `delete`, `purge`, ...) so the web
+   console and HTTP API get full session CRUD parity. *~1 day.*
+8. **REPL slash command dispatch.** `/session`, `/role`, `/route`,
+   `/runtime` currently only print state. Port the Python `commands/`
+   dispatch architecture (parse/execute handler pairs) and the full
+   `list / set / new / switch / rename / delete / help` subcommand
+   surface. *~1-2 days.*
+9. **Local TTS — Kokoro.** Wire the Kokoro provider on top of
+   `sherpa-rs` (or a similar local TTS engine). The feature gate and
+   provider trait surface exist; only the implementation is missing.
+   Port the 9 `ECHOBOT_TTS_KOKORO_*` env vars (only 1 is read today
+   per `crates/echobot-tts/src/factory.rs:122-132`). *~2-3 days.*
+10. **Silero VAD provider.** `crates/echobot-asr/src/vad.rs` defines
+    traits only. Port `vad/silero.py` on top of `sherpa-rs` so the
+    real-time VAD path works. Default `ECHOBOT_VAD_PROVIDER` back to
+    `silero` once it lands. *~2 days.*
+
+### Tier 3 — Polish & v2 stretch
+
+11. **HTTP plumbing fixes** — chat router restoring image/file
+    attachment resolution; attachments router using `file_budget.max_input_bytes`
+    instead of path-string length; ASR websocket holding a long-lived
+    session across the connection instead of stubbing every binary
+    frame.
+12. **Web console services** — port `StageBackgroundService` (no
+    longer stubbed), `WebRuntimeSettingsService`, fix TTS
+    `default_voices` to iterate providers instead of returning `{}`.
+13. **Bundle builtin assets** — `echobot/app/builtin_live2d/` (40
+    files) and `echobot/app/builtin_stage_backgrounds/` (2 JPGs)
+    should be embedded via `include_dir!` so the desktop `.exe` is
+    self-contained. Today they must be user-supplied in the
+    workspace.
+14. **First-class Anthropic client.** Add a non-OpenAI-compatible
+    provider in `echobot-providers` so the runtime can talk to
+    Anthropic without going through an OpenAI-style proxy.
+15. **Auto-generated skill scripts.** Extend `SkillRegistry` to
+    generate skill scripts from conversational data (mirror the
+    Python `SkillRegistry.autogen_*` helpers) and add a CLI command
+    to trigger generation.
+16. **Minor cleanups from the audit** — `ToolRegistryLike.get_tool`
+    / `has_tool`, `SkillRegistry.has_skills()`,
+    `RoleplayEngine.chat_reply()` non-streaming wrapper, `--verbose`
+    flag wiring, stale module docstrings (notably the heartbeat doc
+    that claims a stub when the code is real).
+
+### Phase 4 success criteria
+
+Tier 1 done → no invisible failures, all uploads work, the runtime
+respects its env vars. Tier 2 done → multi-platform deployment is
+real, the bot has long-term memory, the REPL is feature-complete.
+Tier 3 done → parity audit shows zero blockers and ≤ 5 majors. The
+audit is re-run after each tier completes so progress is measurable.
