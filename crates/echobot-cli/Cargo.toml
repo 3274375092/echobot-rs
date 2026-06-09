@@ -16,6 +16,9 @@ echobot-orchestration = { path = "../echobot-orchestration" }
 echobot-providers = { path = "../echobot-providers" }
 echobot-tools = { path = "../echobot-tools" }
 echobot-skill = { path = "../echobot-skill" }
+echobot-tts = { path = "../echobot-tts" }
+echobot-asr = { path = "../echobot-asr" }
+echobot-app = { path = "../echobot-app" }
 
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -30,3 +33,6 @@ futures = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+hyper = { workspace = true }

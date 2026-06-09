@@ -6,16 +6,40 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# Local crates
 echobot-core = { workspace = true }
 echobot-runtime = { workspace = true }
+
+# Async runtime
 tokio = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }
+futures-util = "0.3"
+
+# Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Errors + logging
 thiserror = { workspace = true }
-reqwest = { workspace = true }
-futures = { workspace = true }
 tracing = { workspace = true }
+
+# HTTP + audio
+reqwest = { workspace = true }
 bytes = { workspace = true }
 hound = { workspace = true }
 base64 = { workspace = true }
+
+# Text processing (regex + lazy statics).
+regex = { workspace = true }
+once_cell = { workspace = true }
+
+# WebSocket for Microsoft Edge TTS (edge-tts protocol). New dep, not in
+# workspace.dependencies - declared here intentionally.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+url = "2"
+
+[features]
+# Default feature set: Edge + OpenAI-compatible. Kokoro is opt-in for phase 3.
+default = []
+kokoro = []

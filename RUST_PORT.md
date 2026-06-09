@@ -129,34 +129,60 @@ Prints a "out of scope for v1" message and exits. Accepts
   each chunk so the user sees the LLM tokens as they arrive.
 * **Memory support is a noop in v1.** The runtime accepts a
   `MemorySupport` trait object. v1 ships with `NoopMemorySupport`;
-  ReMeLight (or a real memory back-end) lands in phase 2.
+  ReMeLight (or a real memory back-end) lands in phase 3.
 * **Provider is OpenAI-compatible only in v1.** Anthropic and the other
   back-ends are behind a single `OpenAICompatibleSettings` (different
-  base URL + auth header). A first-class Anthropic client is phase 2.
-* **The `app` and `gateway` subcommands are stubs.** The flag surface
-  is locked in but the implementation lands in phase 2.
+  base URL + auth header). A first-class Anthropic client is phase 3.
+* **The `gateway` subcommand is a stub.** QQ / Telegram are still out
+  of scope for v1. The `app` subcommand is now fully functional.
 
 ## Known TODOs and v1 Limitations
 
 * Memory subsystem: only the `NoopMemorySupport` placeholder is
-  wired. ReMeLight / long-term memory is phase 2.
+  wired. ReMeLight / long-term memory is phase 3.
 * QQ / Telegram channels: out of scope for v1. The `gateway`
   subcommand accepts the flags but exits cleanly.
-* Full HTTP API: out of scope for v1. The `app` subcommand accepts
-  `--host` / `--port` / `--channel-config` but exits cleanly.
 * Auto-generated skill scripts: the `SkillRegistry` parses and
   indexes skill directories but does not generate skill scripts
   from conversational data.
 * The runtime still uses a few `Arc::get_mut` calls to wire the cron
   and heartbeat executors; a cleaner builder API is on the roadmap.
+* **Web asset catch-all uses `Router::fallback`.** matchit 0.7 (the
+  router crate bundled with axum 0.7.9) rejects the brace-prefix
+  catch-all syntax `{*name}` once any sibling route is registered, so
+  the asset fallthrough lives in `create_app::fallback(serve_static)`
+  rather than as a router entry. The brace syntax is the only
+  documented one in axum 0.7; bumping to matchit 0.8 (and axum
+  0.8) would let us bring the catch-all back into the web router.
+* **ASR sherpa-onnx is a stub.** The SenseVoice provider module is
+  wired but `transcribe` returns
+  `AsrError::NotImplemented("sherpa-onnx SenseVoice is not wired in v1")`.
+  Wiring the `sherpa-rs` crate is phase 3 work; v1 falls back to the
+  OpenAI Transcriptions provider.
 
-## Next Steps (Phase 2)
+## Phase 2 metrics
+
+| Crate | LoC (src/) | Tests |
+|---|---|---|
+| `echobot-tts` | 2,538 | 42 |
+| `echobot-asr` | 2,450 | 25 |
+| `echobot-app` | 3,416 | 1 (integration) |
+| **Phase 2 added** | **8,404** | **68** |
+| Workspace total | 29,154 | 171 |
+
+Crate count grew from 7 (phase 1) to 10 (phase 2). All phase 1 tests
+still pass — the wire-up was strictly additive.
+
+## Next Steps (Phase 3)
 
 1. Replace `NoopMemorySupport` with a real memory back-end (ReMeLight
-   or a simpler in-process store).
-2. Land the FastAPI-equivalent HTTP server in the `app` subcommand,
-   backed by `axum` or `warp`.
-3. Land the QQ / Telegram channels in the `gateway` subcommand.
+   via pyo3, or a self-rolled `sled` + `sqlite-vec` + `tiktoken-rs`
+   stack).
+2. Land the QQ / Telegram channels in the `gateway` subcommand.
+3. Wire `sherpa-rs` for the local SenseVoice ASR provider.
+4. Land per-tool smoke tests in `echobot-tools` and an end-to-end
+   integration test that drives the `chat` REPL through a stub
+   provider.
 4. Add per-tool smoke tests in the `echobot-tools` crate, plus an
    integration test that drives the `chat` REPL end-to-end through a
    stub provider.
