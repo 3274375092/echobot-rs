@@ -6,14 +6,29 @@
 //! * `/web/*` serves the embedded frontend assets and falls back to
 //!   `index.html` for the SPA shell
 //! * `/` and `/favicon.ico` map to `index.html` and `favicon.svg`
+//!
+//! The router is wrapped in a permissive CORS layer and a
+//! 60-second per-request timeout. CORS doesn't matter for
+//! same-origin browser traffic but is cheap insurance for any
+//! tool that hits the API from a different origin (e.g. `curl`
+//! from a test harness). The timeout is the more important
+//! guard: without it a slow TTS provider (Edge TTS over a flaky
+//! network to `wss://speech.platform.bing.com`) can hold the
+//! response open until the browser gives up, which Chrome
+//! surfaces as `TypeError: Failed to fetch` — completely
+//! indistinguishable from a real network error from the
+//! front-end's perspective.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::timeout::TimeoutLayer;
 
 use include_dir::include_dir;
 
@@ -47,6 +62,25 @@ pub fn create_app(runtime: Arc<AppRuntime>) -> Router {
         .route("/favicon.ico", get(serve_favicon))
         .nest("/api", api)
         .fallback(serve_static)
+        .layer(
+            // Permissive CORS — any origin, any method, any header.
+            // Same-origin browsers ignore it; cross-origin tools
+            // (curl, Postman, test harnesses) benefit.
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+        // 30-second per-request timeout. Edge TTS WebSocket calls
+        // through to `wss://speech.platform.bing.com` and can take
+        // a while; this gives them headroom while still bounding
+        // the request so the browser doesn't see a half-closed
+        // connection as "Failed to fetch".
+        //
+        // `TimeoutLayer::new` is deprecated in tower-http 0.6 in
+        // favour of `with_status_code`; we use `new` because the
+        // default 408 body is fine for our use case.
+        .layer(#[allow(deprecated)] TimeoutLayer::new(Duration::from_secs(30)))
 }
 
 async fn serve_index() -> Response {
