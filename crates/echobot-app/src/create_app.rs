@@ -38,6 +38,12 @@ pub fn create_app(runtime: Arc<AppRuntime>) -> Router {
     let api = routers::router(state.clone());
     Router::new()
         .route("/", get(serve_index))
+        // The Python `create_app.py` exposes the SPA at both `/`
+        // and `/web` (no trailing slash). Mirror that explicitly so
+        // a browser pointed at `http://host:port/web` doesn't
+        // 404 before the SPA shell has a chance to mount.
+        .route("/web", get(serve_index))
+        .route("/web/", get(serve_index))
         .route("/favicon.ico", get(serve_favicon))
         .nest("/api", api)
         .fallback(serve_static)
@@ -53,6 +59,11 @@ async fn serve_favicon() -> Response {
 
 async fn serve_static(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    // Bare `/web` (no trailing slash) sometimes lands here as well
+    // depending on how the caller dispatched; serve the SPA shell.
+    if path.is_empty() || path == "web" {
+        return serve_embedded("index.html");
+    }
     // The Python `create_app.py` mounts the static dir at
     // `/web/assets/`, so HTTP paths look like `/web/assets/X` while
     // the actual files in the bundle live at the top level (or under

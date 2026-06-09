@@ -202,3 +202,45 @@ fn spa_fallback_serves_index_for_unknown_web_routes() {
     let html = String::from_utf8_lossy(&body);
     assert!(html.contains("<title>"), "SPA fallback should return index.html");
 }
+
+#[test]
+fn web_route_without_trailing_slash_serves_spa() {
+    let app = create_app(build_test_runtime());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    // Browser hits `http://host:port/web` with no trailing slash.
+    // The Python `create_app.py` serves the SPA shell here; the
+    // Rust port must do the same or the user gets a 404.
+    for uri in ["/web", "/web/"] {
+        let response = rt.block_on(async {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{uri} returned {}",
+            response.status()
+        );
+        let body = rt.block_on(async {
+            axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+        });
+        let html = String::from_utf8_lossy(&body);
+        assert!(
+            html.contains("<title>"),
+            "{uri} should serve index.html, got: {}",
+            &html[..html.len().min(200)]
+        );
+    }
+}
