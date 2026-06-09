@@ -188,10 +188,19 @@ pub fn build_default_asr_service(workspace: &Path) -> AsrService {
     let openai = build_default_openai_provider();
 
     let selected_asr = env_text("ECHOBOT_ASR_PROVIDER", DEFAULT_ASR_PROVIDER);
-    let selected_vad = optional_provider_name(&env_text(
-        "ECHOBOT_VAD_PROVIDER",
-        DEFAULT_VAD_PROVIDER,
-    ));
+    // VAD is opt-in for v1 — only honour ECHOBOT_VAD_PROVIDER if
+    // a non-empty, non-sentinel value is explicitly set. Empty
+    // string, "none", "off", "disabled" all mean "no VAD". This
+    // avoids panicking when a provider name is configured but no
+    // concrete implementation is registered.
+    let selected_vad: Option<String> = {
+        let raw = env_text("ECHOBOT_VAD_PROVIDER", DEFAULT_VAD_PROVIDER);
+        let trimmed = raw.trim().to_ascii_lowercase();
+        match trimmed.as_str() {
+            "" | "none" | "off" | "disabled" => None,
+            _ => Some(trimmed.to_string()),
+        }
+    };
 
     AsrServiceBuilder::new()
         .sample_rate(sample_rate)
@@ -264,5 +273,61 @@ mod tests {
         assert!(optional_provider_name("disabled").is_none());
         assert_eq!(optional_provider_name("silero"), Some("silero".to_string()));
         assert_eq!(optional_provider_name("  silero  "), Some("silero".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod factory_integration_tests {
+    use super::*;
+    use std::path::Path;
+
+    /// The default factory must build without panicking, even though
+    /// v1 ships without a concrete VAD implementation. This is the
+    /// regression that broke the desktop binary: a previous
+    /// default of `"silero"` triggered
+    /// `Config("unknown VAD provider: silero")` and panic'd at
+    /// startup. We assert the factory is infallible and that
+    /// `status_snapshot()` lists the OpenAI provider (so the
+    /// user can still transcribe without a VAD).
+    #[tokio::test]
+    async fn default_factory_builds_without_vad() {
+        // Make sure the env doesn't leak from a previous test.
+        std::env::remove_var("ECHOBOT_VAD_PROVIDER");
+        std::env::remove_var("ECHOBOT_ASR_PROVIDER");
+        let service = build_default_asr_service(Path::new("."));
+        let snapshot = service
+            .status_snapshot()
+            .await
+            .expect("status_snapshot");
+        let names: Vec<&str> = snapshot
+            .asr_providers
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert!(
+            names.contains(&"openai-transcriptions"),
+            "default ASR service should register the OpenAI provider; got {names:?}"
+        );
+        assert!(
+            names.contains(&"sherpa-sense-voice"),
+            "default ASR service should register the sherpa-sense-voice provider; got {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_vad_off_disables_vad_selection() {
+        std::env::set_var("ECHOBOT_VAD_PROVIDER", "off");
+        let service = build_default_asr_service(Path::new("."));
+        let snapshot = service
+            .status_snapshot()
+            .await
+            .expect("status_snapshot");
+        // With VAD disabled, no VAD providers should be exposed.
+        assert!(
+            snapshot.vad_providers.is_empty(),
+            "VAD should be disabled; got vad_providers={:?}",
+            snapshot.vad_providers
+        );
+        std::env::remove_var("ECHOBOT_VAD_PROVIDER");
     }
 }
