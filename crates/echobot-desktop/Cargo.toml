@@ -1,0 +1,42 @@
+[package]
+name = "echobot-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "echobot-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", default-features = false }
+
+[dependencies]
+tauri = { version = "2", default-features = false, features = ["wry"] }
+echobot-core = { path = "../echobot-core" }
+echobot-runtime = { path = "../echobot-runtime" }
+echobot-orchestration = { path = "../echobot-orchestration" }
+echobot-providers = { path = "../echobot-providers" }
+echobot-tools = { path = "../echobot-tools" }
+echobot-skill = { path = "../echobot-skill" }
+echobot-tts = { path = "../echobot-tts" }
+echobot-asr = { path = "../echobot-asr" }
+echobot-app = { path = "../echobot-app" }
+echobot-cli = { path = "../echobot-cli" }
+
+axum = { workspace = true }
+
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[features]
+# This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]

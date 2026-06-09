@@ -19,6 +19,7 @@ implemented in idiomatic Rust on top of `tokio`, `clap`, and `reqwest`.
 | ASR | `echobot-asr` | done | `sherpa-onnx` (STUB — see RUST_PORT.md) and `openai_compatible` providers; `AsrService` facade; WAV + symphonia audio decoders; VAD trait surface. |
 | App | `echobot-app` | done | axum-based HTTP server: health, sessions, chat, cron, heartbeat, roles, channels, attachments, web console. Mirrors the Python `echobot.app` package 1:1. |
 | CLI | `echobot-cli` | done | `chat` is fully functional end-to-end. `app` wires the full HTTP server (TTS + ASR + axum router). `gateway` remains a v1 stub. |
+| Desktop | `echobot-desktop` | done | Tauri 2.x desktop shell. Bundles a 31MB single `.exe` (`target/release/echobot-desktop.exe`) that starts the axum server in-process and opens a native webview window. First run copies `.env.example` → `.env`. |
 
 ## Smoke Tests
 
@@ -121,6 +122,37 @@ Flags: `--host`, `--port`, plus the shared runtime flags
 `--no-tools`, `--no-skills`, `--no-memory`, `--no-heartbeat`,
 `--heartbeat-interval`). `--channel-config` is accepted for surface
 stability but is unused in v1.
+
+### Desktop (Tauri)
+
+```bash
+cd D:/code/重构/echobot-rs
+cargo build --release -p echobot-desktop
+./target/release/echobot-desktop.exe
+```
+
+`echobot-desktop` is a Tauri 2.x shell that bundles the entire
+EchoBot stack into a single 31MB Windows executable. On launch it:
+
+1. Copies `.env.example` → `.env` on first run (no overwrite).
+2. Loads `.env` via `dotenvy`.
+3. Assembles the same `FullRuntimeContext` the CLI uses, plus
+   the `TtsService` and `AsrService`.
+4. Starts the axum HTTP server in a background tokio task on
+   `127.0.0.1:8765` (in-process — no separate server binary).
+5. Opens a Tauri webview window pointing at `http://127.0.0.1:8765/web`.
+6. Aborts the server task when the window closes.
+
+The build uses the workspace's `[profile.release]` settings
+(`lto = "fat"`, `codegen-units = 1`, `strip = "symbols"`,
+`panic = "abort"`), which gets the binary down to ~31MB. The
+embedded web assets (21MB of frontend bundles) are baked into
+`echobot-app` via `include_dir!` and pulled into the desktop
+binary by transitively linking the `echobot-app` crate.
+
+To produce a Windows installer (`.msi`/`.exe`), install the
+Tauri CLI (`cargo install tauri-cli --version "^2"`) and run
+`cargo tauri build` from `crates/echobot-desktop/`.
 
 ### Gateway (stub)
 
