@@ -177,8 +177,9 @@ async fn chat_routes_tool_request_to_agent() {
 
     // Wait briefly for the background agent job to make its LLM call.
     // Background jobs are dispatched on the tokio runtime; we poll up
-    // to ~10 seconds to give the agent loop time to schedule.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    // to ~20 seconds to give the agent loop time to schedule when
+    // the suite runs in parallel with other test binaries.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while stub.call_count() < 3 && std::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

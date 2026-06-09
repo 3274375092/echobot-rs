@@ -23,11 +23,14 @@ use crate::state::AppState;
 
 /// The embedded frontend assets, compiled in at build time.
 ///
-/// Resolved at compile time to `D:/code/重构/EchoBot/echobot/app/web/`
-/// (the workspace's sibling directory). The path is relative to the
-/// crate manifest directory.
+/// `build.rs` snapshots the Python EchoBot web console's
+/// `app/web/` directory into `web-assets/` inside this crate at
+/// build time. `include_dir!` then embeds the local copy. This
+/// avoids the `..`-escape path that `include_dir!` 0.7 mishandles
+/// (the macro silently produces an empty bundle when the path
+/// walks up out of the crate's manifest dir).
 pub static WEB_ASSETS: include_dir::Dir =
-    include_dir!("$CARGO_MANIFEST_DIR/../../../EchoBot/echobot/app/web");
+    include_dir!("$CARGO_MANIFEST_DIR/web-assets");
 
 /// Build the [`axum::Router`] for the EchoBot HTTP server.
 pub fn create_app(runtime: Arc<AppRuntime>) -> Router {
@@ -50,8 +53,19 @@ async fn serve_favicon() -> Response {
 
 async fn serve_static(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
-    if let Some(asset) = WEB_ASSETS.get_file(path) {
-        let mime = mime_guess::from_path(path).first_or_octet_stream();
+    // The Python `create_app.py` mounts the static dir at
+    // `/web/assets/`, so HTTP paths look like `/web/assets/X` while
+    // the actual files in the bundle live at the top level (or under
+    // `vendor/`, `styles/`, etc.) without the `assets/` segment.
+    // Strip both prefixes before looking the file up in the embedded
+    // `Dir`. The `include_dir!` macro stores paths relative to the
+    // bundle root (`web-assets/`), with no prefix.
+    let lookup = path
+        .strip_prefix("web/assets/")
+        .or_else(|| path.strip_prefix("web/"))
+        .unwrap_or(path);
+    if let Some(asset) = WEB_ASSETS.get_file(lookup) {
+        let mime = mime_guess::from_path(lookup).first_or_octet_stream();
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, mime.to_string())
