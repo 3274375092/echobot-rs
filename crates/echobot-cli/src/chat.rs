@@ -51,7 +51,10 @@ pub async fn run(args: ChatArgs) -> anyhow::Result<()> {
     run_repl(context, args.verbose).await
 }
 
-async fn run_repl(context: FullRuntimeContext, _verbose: bool) -> anyhow::Result<()> {
+/// Drives the REPL loop with a pre-built [`FullRuntimeContext`]. Public
+/// so integration tests can construct a context with a stub LLM provider
+/// and verify routing behavior end-to-end.
+pub async fn run_repl(context: FullRuntimeContext, _verbose: bool) -> anyhow::Result<()> {
     let coordinator = context.coordinator.clone();
     let cron_service = context.runtime.cron_service.clone();
     let heartbeat = context.runtime.heartbeat_service.as_ref();
@@ -152,7 +155,7 @@ async fn run_repl(context: FullRuntimeContext, _verbose: bool) -> anyhow::Result
             }
 
             // Run a turn.
-            match run_turn(&coordinator, &tool_registry_factory, &session_name, &prompt).await {
+            match run_turn(&coordinator, tool_registry_factory, &session_name, &prompt).await {
                 Ok(()) => {}
                 Err(e) => {
                     warn!(error = %e, "turn failed");
@@ -174,9 +177,7 @@ async fn run_repl(context: FullRuntimeContext, _verbose: bool) -> anyhow::Result
     let _ = tool_registry_factory;
     drop(memory_support);
 
-    if let Err(e) = result {
-        return Err(e);
-    }
+    result?;
     info!("chat REPL exiting");
     Ok(())
 }

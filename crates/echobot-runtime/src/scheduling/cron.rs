@@ -212,7 +212,7 @@ impl CronPayload {
 }
 
 /// Runtime state of a cron job.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CronJobState {
     /// Next scheduled run (ISO 8601 with seconds).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -226,17 +226,6 @@ pub struct CronJobState {
     /// Last error message, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
-}
-
-impl Default for CronJobState {
-    fn default() -> Self {
-        Self {
-            next_run_at: None,
-            last_run_at: None,
-            last_status: None,
-            last_error: None,
-        }
-    }
 }
 
 impl CronJobState {

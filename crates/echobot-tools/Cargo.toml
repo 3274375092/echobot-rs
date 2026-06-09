@@ -21,3 +21,6 @@ reqwest = { workspace = true }
 futures = { workspace = true }
 chrono = { workspace = true }
 mime_guess = "2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

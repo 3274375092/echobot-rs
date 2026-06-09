@@ -280,3 +280,219 @@ impl BaseTool for GitDiffTool {
 fn _silence_unused() {
     let _ = require_string(&Value::Null, "k");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::BaseTool;
+    use serde_json::json;
+    use std::process::Stdio;
+    use tokio::process::Command;
+
+    /// Tries to initialize a git repo and make a single commit in `dir`.
+    /// Returns `true` if git is available, `false` if spawning failed
+    /// (e.g. the CI runner has no `git` binary).
+    async fn try_git_init(dir: &Path) -> bool {
+        let init = Command::new("git")
+            .arg("init")
+            .arg("--quiet")
+            .arg("-b")
+            .arg("main")
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+        let init = match init {
+            Ok(s) if s.success() => true,
+            _ => {
+                // Fallback: older git that doesn't support `-b main`.
+                let fallback = Command::new("git")
+                    .arg("init")
+                    .arg("--quiet")
+                    .current_dir(dir)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await;
+                match fallback {
+                    Ok(s) => s.success(),
+                    Err(_) => return false,
+                }
+            }
+        };
+        if !init {
+            return false;
+        }
+        // Make an initial commit on the freshly created repo so that
+        // status / diff have a HEAD to compare against. We use a
+        // temporary env so we never accidentally hit the developer's
+        // global git config.
+        let env = vec![
+            ("GIT_AUTHOR_NAME", "Test"),
+            ("GIT_AUTHOR_EMAIL", "test@example.com"),
+            ("GIT_COMMITTER_NAME", "Test"),
+            ("GIT_COMMITTER_EMAIL", "test@example.com"),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_SYSTEM", "/dev/null"),
+        ];
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+        let commit = Command::new("git")
+            .arg("-c")
+            .arg("user.name=Test")
+            .arg("-c")
+            .arg("user.email=test@example.com")
+            .arg("-c")
+            .arg("commit.gpgsign=false")
+            .arg("commit")
+            .arg("--allow-empty")
+            .arg("-m")
+            .arg("init")
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+        for (k, _) in &env {
+            std::env::remove_var(k);
+        }
+        matches!(commit, Ok(s) if s.success())
+    }
+
+    #[tokio::test]
+    async fn git_status_reports_clean_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        if !try_git_init(tmp.path()).await {
+            eprintln!("git binary unavailable; skipping git_status test");
+            return;
+        }
+        let tool = GitStatusTool::new(tmp.path());
+        let result = tool.run(json!({})).await.expect("status ok");
+        let text = result
+            .data
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text");
+        // A clean repo shows the branch header only.
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert!(
+            lines.iter().all(|l| l.starts_with("## ") || l.starts_with("?? ")),
+            "expected clean status, got {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_status_reports_untracked_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        if !try_git_init(tmp.path()).await {
+            eprintln!("git binary unavailable; skipping");
+            return;
+        }
+        std::fs::write(tmp.path().join("untracked.txt"), "hi").expect("write");
+        let tool = GitStatusTool::new(tmp.path());
+        let result = tool.run(json!({})).await.expect("status ok");
+        let text = result
+            .data
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text");
+        assert!(text.contains("untracked.txt"), "text should mention untracked: {text}");
+    }
+
+    #[tokio::test]
+    async fn git_diff_returns_empty_diff_for_clean_tree() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        if !try_git_init(tmp.path()).await {
+            eprintln!("git binary unavailable; skipping");
+            return;
+        }
+        let tool = GitDiffTool::new(tmp.path());
+        let result = tool.run(json!({})).await.expect("diff ok");
+        let diff = result
+            .data
+            .get("diff")
+            .and_then(Value::as_str)
+            .expect("diff string");
+        assert!(diff.is_empty(), "clean tree should produce empty diff: {diff:?}");
+        assert_eq!(
+            result.data.get("truncated").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn git_diff_shows_unstaged_changes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        if !try_git_init(tmp.path()).await {
+            eprintln!("git binary unavailable; skipping");
+            return;
+        }
+        // Add and commit a file, then modify it.
+        let target = tmp.path().join("file.txt");
+        std::fs::write(&target, "old content\n").expect("write");
+        let status = Command::new("git")
+            .arg("-c")
+            .arg("user.name=Test")
+            .arg("-c")
+            .arg("user.email=test@example.com")
+            .arg("add")
+            .arg("file.txt")
+            .current_dir(tmp.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .expect("git add");
+        assert!(status.success(), "git add should succeed");
+        let commit = Command::new("git")
+            .arg("-c")
+            .arg("user.name=Test")
+            .arg("-c")
+            .arg("user.email=test@example.com")
+            .arg("commit")
+            .arg("-m")
+            .arg("add file")
+            .current_dir(tmp.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .expect("git commit");
+        assert!(commit.success(), "git commit should succeed");
+
+        std::fs::write(&target, "new content\n").expect("rewrite");
+        let tool = GitDiffTool::new(tmp.path());
+        let result = tool.run(json!({})).await.expect("diff ok");
+        let diff = result
+            .data
+            .get("diff")
+            .and_then(Value::as_str)
+            .expect("diff");
+        assert!(diff.contains("old content") || diff.contains("-old"));
+        assert!(diff.contains("new content") || diff.contains("+new"));
+    }
+
+    #[tokio::test]
+    async fn git_status_fails_outside_repo() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = GitStatusTool::new(tmp.path());
+        let err = tool
+            .run(json!({}))
+            .await
+            .expect_err("non-repo should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("git")
+                || msg.to_lowercase().contains("repository")
+                || msg.contains("not a git"),
+            "expected git-related error, got: {msg}"
+        );
+    }
+}

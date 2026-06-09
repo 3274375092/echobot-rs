@@ -5,7 +5,10 @@
 //! * `sherpa-sense-voice` ASR provider (stub for v1 — see
 //!   `providers::sherpa`).
 //! * `openai-transcriptions` ASR provider.
-//! * `silero` VAD provider (trait surface only in v1).
+//! * No VAD provider in v1 — only the `VadProvider` trait surface is ported.
+//!   `silero` will land in `providers/silero.rs`; until then VAD is disabled
+//!   by default. Override with `ECHOBOT_VAD_PROVIDER=<name>` once a provider
+//!   is registered.
 //!
 //! The default names are also exposed as constants so other crates can
 //! reference them without hard-coding strings.
@@ -21,8 +24,9 @@ use crate::service::AsrService;
 
 /// Default ASR provider name.
 pub const DEFAULT_ASR_PROVIDER: &str = "sherpa-sense-voice";
-/// Default VAD provider name.
-pub const DEFAULT_VAD_PROVIDER: &str = "silero";
+/// Default VAD provider name. `"none"` disables VAD — see the module-level
+/// docs for why silero isn't wired up in v1.
+pub const DEFAULT_VAD_PROVIDER: &str = "none";
 
 /// Read an environment variable as a trimmed `String`, falling back to
 /// `default` when unset or empty.
@@ -141,6 +145,23 @@ pub fn build_default_openai_provider() -> OpenAITranscriptionsProvider {
 }
 
 /// Build the default `AsrService` for the given workspace.
+///
+/// The `sherpa-sense-voice` provider is always registered, but the
+/// **concrete type** it resolves to depends on the `sherpa-rs` cargo
+/// feature:
+///
+/// * **Default (no `sherpa-rs` feature)** — a stub provider that returns
+///   `AsrError::NotImplemented` from every transcription call. v1 falls
+///   back to the OpenAI-compatible provider; the stub keeps the
+///   registration name stable so the rest of the crate (config, env
+///   parsing, factory wiring) does not have to special-case it.
+/// * **`sherpa-rs` feature enabled** — a real
+///   `sherpa_rs::sense_voice::SenseVoiceRecognizer`-backed provider that
+///   lazy-downloads the model bundle on first use.
+///
+/// Either way, the registration name is `"sherpa-sense-voice"` and the
+/// OpenAI-compatible provider is also registered as
+/// `"openai-transcriptions"`.
 pub fn build_default_asr_service(workspace: &Path) -> AsrService {
     let sample_rate = env_int("ECHOBOT_ASR_SAMPLE_RATE", 16_000).max(0) as u32;
 

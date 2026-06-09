@@ -525,7 +525,7 @@ impl<C: RuntimeSettingsCoordinator> RuntimeSettingsManager<C> {
         let snap = self.snapshot().await?;
         snap.get(&normalized)
             .cloned()
-            .ok_or_else(|| Error::UnknownRuntimeSetting(normalized))
+            .ok_or(Error::UnknownRuntimeSetting(normalized))
     }
 
     /// Applies a single override.

@@ -401,3 +401,210 @@ fn delay_to_iso(delay_seconds: i64) -> String {
     let target = Local::now() + Duration::seconds(delay_seconds);
     target.to_rfc3339()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::BaseTool;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// In-memory `CronService` used to exercise the tool without
+    /// scheduling real background jobs.
+    struct InMemoryCron {
+        jobs: Mutex<HashMap<String, CronJob>>,
+        counter: Mutex<u64>,
+    }
+
+    impl InMemoryCron {
+        fn new() -> Self {
+            Self {
+                jobs: Mutex::new(HashMap::new()),
+                counter: Mutex::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CronService for InMemoryCron {
+        async fn add_job(
+            &self,
+            name: &str,
+            schedule: &CronSchedule,
+            payload: &CronPayload,
+            delete_after_run: bool,
+        ) -> Result<CronJob, Error> {
+            let mut counter = self.counter.lock().expect("counter lock");
+            *counter += 1;
+            let id = format!("job-{counter}");
+            let summary = CronJobSummary {
+                id: id.clone(),
+                name: name.to_string(),
+                schedule_kind: schedule.kind.clone(),
+                schedule_value: schedule.value.clone(),
+                timezone: schedule.timezone.clone(),
+                task_kind: payload.kind.clone(),
+                content: payload.content.clone(),
+                session_name: payload.session_name.clone(),
+                enabled: true,
+                delete_after_run,
+            };
+            let job = CronJob { summary };
+            self.jobs
+                .lock()
+                .expect("jobs lock")
+                .insert(
+                    id,
+                    CronJob {
+                        summary: job.summary.clone(),
+                    },
+                );
+            Ok(job)
+        }
+
+        async fn list_jobs(&self, include_disabled: bool) -> Result<Vec<CronJob>, Error> {
+            let jobs = self.jobs.lock().expect("jobs lock");
+            Ok(jobs
+                .values()
+                .filter(|j| include_disabled || j.summary.enabled)
+                .cloned()
+                .collect())
+        }
+
+        async fn remove_job(&self, job_id: &str) -> Result<bool, Error> {
+            Ok(self.jobs.lock().expect("jobs lock").remove(job_id).is_some())
+        }
+
+        async fn run_job(&self, _job_id: &str, _force: bool) -> Result<bool, Error> {
+            Ok(true)
+        }
+
+        async fn set_enabled(&self, job_id: &str, enabled: bool) -> Result<Option<CronJob>, Error> {
+            let mut jobs = self.jobs.lock().expect("jobs lock");
+            if let Some(job) = jobs.get_mut(job_id) {
+                job.summary.enabled = enabled;
+                Ok(Some(job.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    #[test]
+    fn cron_tool_metadata_is_well_formed() {
+        let service = Arc::new(InMemoryCron::new());
+        let tool = CronTool::new(service, "default", true);
+        assert_eq!(tool.name(), "cron");
+        let params = tool.parameters();
+        assert_eq!(params["type"], "object");
+        let required = params["required"].as_array().expect("required array");
+        assert!(required.iter().any(|v| v == "action"));
+    }
+
+    #[tokio::test]
+    async fn cron_tool_list_action_returns_empty_initially() {
+        let service = Arc::new(InMemoryCron::new());
+        let tool = CronTool::new(service, "default", true);
+        let result = tool
+            .run(json!({ "action": "list" }))
+            .await
+            .expect("list ok");
+        let jobs = result
+            .data
+            .get("jobs")
+            .and_then(Value::as_array)
+            .expect("jobs array");
+        assert!(jobs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cron_tool_add_then_list() {
+        let service = Arc::new(InMemoryCron::new());
+        let tool = CronTool::new(service.clone(), "session-x", true);
+        let result = tool
+            .run(json!({
+                "action": "add",
+                "name": "reminder",
+                "content": "say hi",
+                "task_type": "text",
+                "delay_seconds": 60,
+            }))
+            .await
+            .expect("add ok");
+        let job = result
+            .data
+            .get("job")
+            .expect("job payload");
+        assert_eq!(job["name"], "reminder");
+        assert_eq!(job["task_kind"], "text");
+        assert_eq!(job["session_name"], "session-x");
+
+        let list = tool
+            .run(json!({ "action": "list" }))
+            .await
+            .expect("list ok");
+        let jobs = list
+            .data
+            .get("jobs")
+            .and_then(Value::as_array)
+            .expect("jobs");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0]["name"], "reminder");
+    }
+
+    #[tokio::test]
+    async fn cron_tool_blocks_mutations_when_disabled() {
+        let service = Arc::new(InMemoryCron::new());
+        let tool = CronTool::new(service, "default", false);
+        let err = tool
+            .run(json!({
+                "action": "add",
+                "name": "x",
+                "content": "y",
+                "delay_seconds": 10,
+            }))
+            .await
+            .expect_err("mutations disabled should error");
+        assert!(err.to_string().contains("disabled") || err.to_string().contains("blocked"));
+    }
+
+    #[tokio::test]
+    async fn cron_tool_rejects_unknown_action() {
+        let service = Arc::new(InMemoryCron::new());
+        let tool = CronTool::new(service, "default", true);
+        let err = tool
+            .run(json!({ "action": "explode" }))
+            .await
+            .expect_err("unknown action should fail");
+        assert!(err.to_string().contains("Unsupported"));
+    }
+
+    #[tokio::test]
+    async fn cron_tool_requires_one_schedule() {
+        let service = Arc::new(InMemoryCron::new());
+        let tool = CronTool::new(service, "default", true);
+        let err = tool
+            .run(json!({
+                "action": "add",
+                "name": "x",
+                "content": "y",
+            }))
+            .await
+            .expect_err("no schedule should fail");
+        assert!(err.to_string().contains("Exactly one"));
+    }
+
+    #[test]
+    fn cron_schedule_helpers() {
+        let s = CronSchedule::at("2026-06-09T00:00:00Z");
+        assert_eq!(s.kind, "at");
+        let s = CronSchedule::every(120);
+        assert_eq!(s.kind, "every");
+        assert_eq!(s.value, "120");
+        let s = CronSchedule::cron("0 9 * * *", Some("UTC".to_string()));
+        assert_eq!(s.kind, "cron");
+        assert_eq!(s.timezone.as_deref(), Some("UTC"));
+    }
+}

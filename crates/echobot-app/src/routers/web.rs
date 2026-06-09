@@ -299,6 +299,11 @@ async fn get_live2d_index() -> Result<Response, AppError> {
     ))
 }
 
+// Kept for future use: the live2d asset fetchers are not currently
+// wired into the router (the v1 web console has live2d metadata but
+// does not yet serve the binary assets directly). They are part of the
+// established public surface and will be enabled in a follow-up.
+#[allow(dead_code)]
 async fn get_live2d_asset(
     State(state): State<AppState>,
     Path(asset_path): Path<String>,
@@ -306,6 +311,7 @@ async fn get_live2d_asset(
     get_live2d_asset_inner(state, &asset_path).await
 }
 
+#[allow(dead_code)]
 async fn get_live2d_asset_inner(
     state: AppState,
     asset_path: &str,
@@ -323,6 +329,7 @@ async fn get_live2d_asset_inner(
         .into_response())
 }
 
+#[allow(dead_code)]
 async fn get_stage_background(
     State(state): State<AppState>,
     Path(asset_path): Path<String>,
@@ -330,6 +337,7 @@ async fn get_stage_background(
     get_stage_background_inner(state, &asset_path).await
 }
 
+#[allow(dead_code)]
 async fn get_stage_background_inner(
     state: AppState,
     asset_path: &str,
@@ -507,16 +515,13 @@ async fn asr_ws_loop(socket: WebSocket, asr: Arc<AsrService>) {
                     "state": snap.state,
                     "detail": snap.detail,
                 })
-                .to_string()
-                .into(),
+                .to_string(),
             ))
             .await;
     } else {
         let _ = sender
             .send(Message::Text(
-                serde_json::json!({ "type": "error", "message": "ASR is not ready" })
-                    .to_string()
-                    .into(),
+                serde_json::json!({ "type": "error", "message": "ASR is not ready" }).to_string(),
             ))
             .await;
         let _ = sender.close().await;
@@ -535,8 +540,7 @@ async fn asr_ws_loop(socket: WebSocket, asr: Arc<AsrService>) {
                 let _ = sender
                     .send(Message::Text(
                         serde_json::json!({ "type": "ignored", "reason": "v1 stub" })
-                            .to_string()
-                            .into(),
+                            .to_string(),
                     ))
                     .await;
             }
@@ -544,13 +548,13 @@ async fn asr_ws_loop(socket: WebSocket, asr: Arc<AsrService>) {
                 if text == "flush" {
                     let _ = sender
                         .send(Message::Text(
-                            serde_json::json!({ "type": "flush_complete" }).to_string().into(),
+                            serde_json::json!({ "type": "flush_complete" }).to_string(),
                         ))
                         .await;
                 } else if text == "reset" {
                     let _ = sender
                         .send(Message::Text(
-                            serde_json::json!({ "type": "reset" }).to_string().into(),
+                            serde_json::json!({ "type": "reset" }).to_string(),
                         ))
                         .await;
                 }

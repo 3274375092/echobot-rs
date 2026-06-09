@@ -321,8 +321,8 @@ mod tests {
     fn parses_booleans() {
         assert!(parse_bool(Some("true"), false));
         assert!(!parse_bool(Some("FALSE"), true));
-        assert_eq!(parse_bool(None, true), true);
-        assert_eq!(parse_bool(None, false), false);
+        assert!(parse_bool(None, true));
+        assert!(!parse_bool(None, false));
     }
 
     #[test]

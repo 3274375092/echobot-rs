@@ -17,9 +17,9 @@ use echobot_app::{create_app, AppRuntime};
 /// `build_minimal_tts_service` and a no-network ASR service so the
 /// runtime constructor doesn't try to reach out to a VAD provider.
 async fn build_test_runtime() -> Arc<AppRuntime> {
-    let _ = std::env::set_var("LLM_API_KEY", "sk-test");
-    let _ = std::env::set_var("LLM_MODEL", "gpt-4o-mini");
-    let _ = std::env::set_var("LLM_BASE_URL", "https://api.openai.com/v1");
+    std::env::set_var("LLM_API_KEY", "sk-test");
+    std::env::set_var("LLM_MODEL", "gpt-4o-mini");
+    std::env::set_var("LLM_BASE_URL", "https://api.openai.com/v1");
     // Build the runtime with no TTS / ASR services so the test does
     // not need any network or model files. The runtime constructor
     // treats `None` as a stub, which is exactly what the integration

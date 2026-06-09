@@ -39,8 +39,13 @@ symphonia = { version = "0.5", features = ["all"] }
 parking_lot = "0.12"
 include_dir = "0.7"
 mime_guess = "2"
+tempfile = "3"
 echobot-core = { path = "crates/echobot-core" }
 echobot-runtime = { path = "crates/echobot-runtime" }
 echobot-orchestration = { path = "crates/echobot-orchestration" }
+echobot-providers = { path = "crates/echobot-providers" }
+echobot-tools = { path = "crates/echobot-tools" }
+echobot-skill = { path = "crates/echobot-skill" }
 echobot-tts = { path = "crates/echobot-tts" }
 echobot-asr = { path = "crates/echobot-asr" }
+echobot-app = { path = "crates/echobot-app" }

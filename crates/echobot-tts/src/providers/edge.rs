@@ -82,6 +82,7 @@ impl EdgeTtsConfig {
 }
 
 /// Microsoft Edge read-aloud TTS provider.
+#[derive(Default)]
 pub struct EdgeTtsProvider {
     config: EdgeTtsConfig,
 }
@@ -334,14 +335,6 @@ impl EdgeTtsProvider {
             ));
         }
         Ok(audio)
-    }
-}
-
-impl Default for EdgeTtsProvider {
-    fn default() -> Self {
-        Self {
-            config: EdgeTtsConfig::default(),
-        }
     }
 }
 

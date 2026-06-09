@@ -2,7 +2,7 @@
 //! rename / delete / set role / set route mode.
 
 use axum::extract::{Path, State};
-use axum::routing::{delete, get, patch, put};
+use axum::routing::{get, put};
 use axum::Json;
 use axum::Router;
 

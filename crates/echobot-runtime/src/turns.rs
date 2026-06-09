@@ -46,6 +46,13 @@ pub struct AgentRunResult {
 
 /// Subset of `AgentCore` the runner actually needs. The real
 /// `echobot_core::AgentCore` will implement this trait once it's ported.
+///
+/// The method signatures mirror the Python `AgentCore` 1:1, so each
+/// `ask_with_*` entry point necessarily takes a long argument list.
+/// Clippy's `too_many_arguments` lint is intentionally suppressed on the
+/// trait so the wire-up between the Python and Rust ports stays
+/// trivially comparable.
+#[allow(clippy::too_many_arguments)]
 pub trait AgentCoreLike: Send + Sync {
     /// Ask the model a one-shot question (no tools / no memory).
     fn ask<'a>(
@@ -135,6 +142,11 @@ pub trait SkillRegistryLike: Send + Sync {
 
 /// Picks the right `ask_with_*` entry point on `agent`, matching the Python
 /// behavior in `echobot/runtime/turns.py`.
+///
+/// The argument list mirrors the Python helper 1:1; see the
+/// `AgentCoreLike` trait note above for why `too_many_arguments` is
+/// intentionally suppressed.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_agent_turn(
     agent: &dyn AgentCoreLike,
     prompt: &str,

@@ -1375,7 +1375,7 @@ pub fn build_visible_response_content(
     MessageContent::Blocks(
         blocks
             .into_iter()
-            .filter_map(|v| MessageContentBlock::from_value(v))
+            .filter_map(MessageContentBlock::from_value)
             .collect(),
     )
 }

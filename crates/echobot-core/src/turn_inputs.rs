@@ -88,7 +88,7 @@ pub fn build_user_message_content(
 
 /// Resolves attachment inputs directly into [`MessageContentBlock`]s (image
 /// + file). Useful when the caller has already collected image/file dicts
-/// and just wants the typed blocks.
+///   and just wants the typed blocks.
 pub fn attachment_inputs_to_blocks(
     store: &AttachmentStore,
     workspace: &Path,

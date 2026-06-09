@@ -161,3 +161,72 @@ pub fn basic_deps_for_workspace(workspace: impl AsRef<Path>) -> BasicToolDeps {
         ..Default::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::BaseTool;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn current_time_tool_returns_non_empty_timestamp() {
+        let tool = CurrentTimeTool;
+        let result = tool.run(json!({})).await.expect("run succeeds");
+        let payload = result.data;
+        let ts = payload
+            .get("current_time")
+            .and_then(Value::as_str)
+            .expect("current_time field is a string");
+        assert!(!ts.is_empty(), "timestamp should be non-empty: {ts}");
+        // RFC3339 timestamps include 'T' separator and timezone offset.
+        assert!(ts.contains('T'), "timestamp should look like RFC3339: {ts}");
+        let tz = payload
+            .get("timezone")
+            .and_then(Value::as_str)
+            .expect("timezone field is a string");
+        assert!(!tz.is_empty(), "timezone should be non-empty: {tz}");
+    }
+
+    #[test]
+    fn current_time_tool_metadata_is_well_formed() {
+        let tool = CurrentTimeTool;
+        assert_eq!(tool.name(), "get_current_time");
+        assert!(!tool.description().is_empty());
+        let params = tool.parameters();
+        assert_eq!(params["type"], "object");
+    }
+
+    #[test]
+    fn basic_tool_registry_is_populated() {
+        let registry = create_basic_tool_registry(BasicToolDeps::default());
+        let names = registry.names();
+        // The standard set of tools must always be present.
+        for required in [
+            "get_current_time",
+            "list_directory",
+            "read_text_file",
+            "write_text_file",
+            "edit_text_file",
+            "search_files",
+            "search_text_in_files",
+            "git_status",
+            "git_diff",
+            "update_plan",
+            "request_user_input",
+            "fetch_web_page",
+            "run_shell_command",
+        ] {
+            assert!(
+                names.iter().any(|n| n == required),
+                "registry should include {required}, got: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn basic_deps_for_workspace_overrides_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let deps = basic_deps_for_workspace(tmp.path());
+        assert_eq!(deps.workspace(), tmp.path());
+    }
+}

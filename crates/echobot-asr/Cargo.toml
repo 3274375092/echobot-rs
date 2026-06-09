@@ -21,3 +21,17 @@ hound = { workspace = true }
 base64 = { workspace = true }
 symphonia = { workspace = true }
 parking_lot = { workspace = true }
+
+# Optional local ASR backend. Pulls in the sherpa-onnx C library via
+# sherpa-rs-sys; gated behind the `sherpa-rs` cargo feature so the default
+# build does not download hundreds of MB of native binaries.
+sherpa-rs = { version = "0.6.8", default-features = false, optional = true }
+
+[features]
+# v1 default: no local ASR backend. The `sherpa-sense-voice` provider stays
+# a stub that returns `AsrError::NotImplemented`.
+default = []
+# Enable the real `sherpa-rs`-backed SenseVoice provider. The first build
+# will fetch sherpa-onnx native libraries from GitHub (the
+# `download-binaries` feature on sherpa-rs-sys is turned on automatically).
+sherpa-rs = ["dep:sherpa-rs"]

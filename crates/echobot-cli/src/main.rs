@@ -6,13 +6,10 @@
 //! - `app` and `gateway` are phase 1 stubs that print a message and exit
 //!   cleanly (full HTTP server / QQ / Telegram integration land in
 //!   phase 2 / v2).
-
-mod app;
-mod bridge;
-mod chat;
-mod common;
-mod gateway;
-mod runtime_assembly;
+//!
+//! The implementation lives in the `echobot_cli` library crate (see
+//! `src/lib.rs`); this binary is a thin wrapper that maps the parsed
+//! subcommand to the right module function.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -28,11 +25,11 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Interactive terminal chat.
-    Chat(chat::ChatArgs),
+    Chat(echobot_cli::chat::ChatArgs),
     /// FastAPI-style web console + channels.
-    App(app::AppArgs),
+    App(echobot_cli::app::AppArgs),
     /// Multi-channel gateway only (QQ / Telegram).
-    Gateway(gateway::GatewayArgs),
+    Gateway(echobot_cli::gateway::GatewayArgs),
 }
 
 #[tokio::main]
@@ -40,9 +37,9 @@ async fn main() -> Result<()> {
     init_tracing();
     let cli = Cli::parse();
     match cli.command {
-        Command::Chat(args) => chat::run(args).await,
-        Command::App(args) => app::run(args).await,
-        Command::Gateway(args) => gateway::run(args).await,
+        Command::Chat(args) => echobot_cli::chat::run(args).await,
+        Command::App(args) => echobot_cli::app::run(args).await,
+        Command::Gateway(args) => echobot_cli::gateway::run(args).await,
     }
 }
 

@@ -6,7 +6,7 @@
 //! Providers:
 //! * [`edge`]              — Microsoft Edge "read aloud" WebSocket API.
 //! * [`openai_compatible`] — any OpenAI `/audio/speech`-compatible HTTP
-//!                           endpoint.
+//!   endpoint.
 //! * [`kokoro`]            — STUB; gated by the `kokoro` cargo feature.
 
 pub mod edge;

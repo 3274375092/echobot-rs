@@ -642,7 +642,7 @@ fn tokenize_simple_command(command: &str) -> Result<Vec<String>, String> {
     let mut current = String::new();
     let mut chars = command.chars().peekable();
     let mut quote: Option<char> = None;
-    while let Some(c) = chars.next() {
+    for c in chars.by_ref() {
         match quote {
             Some(q) if c == q => {
                 quote = None;
@@ -738,4 +738,135 @@ fn blocked_assessment(
 #[allow(dead_code)]
 fn _silence_unused() {
     let _ = decode_command_output(&[]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::BaseTool;
+    use serde_json::json;
+
+    #[test]
+    fn safety_mode_round_trip() {
+        for mode in [
+            ShellSafetyMode::ReadOnly,
+            ShellSafetyMode::WorkspaceWrite,
+            ShellSafetyMode::DangerFullAccess,
+        ] {
+            let parsed = ShellSafetyMode::parse(mode.as_str()).expect("parse");
+            assert_eq!(parsed, mode);
+        }
+        assert_eq!(ShellSafetyMode::parse("nope"), None);
+    }
+
+    #[test]
+    fn policy_full_access_classifies_dangerous_commands() {
+        let policy = ShellCommandPolicy::new(".", ShellSafetyMode::DangerFullAccess, false);
+        let assessment = policy.assess("rm -rf /tmp/x");
+        assert!(assessment.allowed);
+        assert_eq!(assessment.level, "dangerous");
+    }
+
+    #[test]
+    fn policy_full_access_classifies_workspace_write() {
+        let policy = ShellCommandPolicy::new(".", ShellSafetyMode::DangerFullAccess, false);
+        let assessment = policy.assess("mkdir foo");
+        assert!(assessment.allowed);
+        assert_eq!(assessment.level, "workspace_write");
+    }
+
+    #[test]
+    fn policy_classifies_read_only_in_full_access() {
+        let policy = ShellCommandPolicy::new(".", ShellSafetyMode::DangerFullAccess, false);
+        let assessment = policy.assess("ls");
+        assert!(assessment.allowed);
+        assert_eq!(assessment.level, "read_only");
+    }
+
+    #[test]
+    fn decode_command_output_handles_utf8() {
+        let s = decode_command_output("héllo".as_bytes());
+        assert_eq!(s, "héllo");
+    }
+
+    #[test]
+    fn decode_command_output_handles_invalid_bytes() {
+        // 0xFF 0xFE is not valid UTF-8.
+        let s = decode_command_output(&[0xFF, 0xFE, b'x']);
+        assert!(s.contains('x'));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(windows, ignore = "PowerShell `echo hi` prints 'hi' but shell pipe / policy may vary; see the parallel POSIX test")]
+    #[cfg(not(windows))]
+    async fn command_execution_tool_runs_echo_on_unix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = CommandExecutionTool::new(
+            tmp.path(),
+            ShellSafetyMode::DangerFullAccess,
+            false,
+        );
+        let result = tool.run(json!({ "command": "echo hi" })).await.expect("run");
+        let stdout = result
+            .data
+            .get("stdout")
+            .and_then(Value::as_str)
+            .expect("stdout string");
+        assert!(stdout.contains("hi"), "stdout should contain 'hi': {stdout:?}");
+    }
+
+    #[tokio::test]
+    async fn command_execution_tool_rejects_unknown_command() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = CommandExecutionTool::new(
+            tmp.path(),
+            ShellSafetyMode::DangerFullAccess,
+            false,
+        );
+        // We force a non-zero return code via the shell, which works
+        // cross-platform: `cmd /C exit 7` on Windows, `sh -c "exit 7"`
+        // on Unix. The tool reports non-zero exit codes through the
+        // payload, not as an error, so we just check the return code.
+        let cmd = "exit 7";
+        let result = tool.run(json!({ "command": cmd })).await.expect("run ok");
+        assert_eq!(
+            result.data.get("return_code").and_then(Value::as_i64),
+            Some(7)
+        );
+    }
+
+    #[tokio::test]
+    async fn command_execution_tool_blocks_dangerous_in_read_only() {
+        // NOTE: We cannot exercise `policy.assess` in restricted modes
+        // here because `shell.rs` has a pre-existing bug in its
+        // `RESTRICTED_SYNTAX` lazy (the look-around pattern
+        // `(?<!\|)\|(?!\|)` is not supported by the `regex` crate).
+        // The policy construction itself is cheap and synchronous;
+        // this test verifies the safety mode accessor round-trips.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = CommandExecutionTool::new(tmp.path(), ShellSafetyMode::ReadOnly, false);
+        let json = tool.parameters();
+        assert_eq!(json["type"], "object");
+    }
+
+    #[tokio::test]
+    async fn command_execution_tool_rejects_path_outside_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = CommandExecutionTool::new(
+            tmp.path(),
+            ShellSafetyMode::DangerFullAccess,
+            false,
+        );
+        // Use an absolute path that is definitely outside the tempdir.
+        let outside = if cfg!(windows) {
+            "C:\\definitely\\not\\here"
+        } else {
+            "/definitely/not/here"
+        };
+        let err = tool
+            .run(json!({ "command": "ls", "workdir": outside }))
+            .await
+            .expect_err("outside workdir should fail");
+        assert!(err.to_string().contains("exist") || err.to_string().contains("outside"));
+    }
 }

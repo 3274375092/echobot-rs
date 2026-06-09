@@ -5,20 +5,24 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "echobot_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "echobot"
 path = "src/main.rs"
 
 [dependencies]
-echobot-core = { path = "../echobot-core" }
-echobot-runtime = { path = "../echobot-runtime" }
-echobot-orchestration = { path = "../echobot-orchestration" }
-echobot-providers = { path = "../echobot-providers" }
-echobot-tools = { path = "../echobot-tools" }
-echobot-skill = { path = "../echobot-skill" }
-echobot-tts = { path = "../echobot-tts" }
-echobot-asr = { path = "../echobot-asr" }
-echobot-app = { path = "../echobot-app" }
+echobot-core.workspace = true
+echobot-runtime.workspace = true
+echobot-orchestration.workspace = true
+echobot-providers.workspace = true
+echobot-tools.workspace = true
+echobot-skill.workspace = true
+echobot-tts.workspace = true
+echobot-asr.workspace = true
+echobot-app.workspace = true
 
 clap = { workspace = true }
 anyhow = { workspace = true }

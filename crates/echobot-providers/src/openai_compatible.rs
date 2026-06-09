@@ -76,6 +76,13 @@ impl OpenAICompatibleProvider {
     }
 
     /// Builds the JSON payload for a chat completions request.
+    ///
+    /// The argument list mirrors the Python provider's `build_payload`
+    /// 1:1 (see `echobot.providers.openai_compatible.OpenAICompatibleProvider.build_payload`).
+    /// Clippy's `too_many_arguments` lint is intentionally suppressed on this
+    /// method so the call site stays trivially portable between the Python
+    /// and Rust ports.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_payload(
         &self,
         messages: &[LLMMessage],
@@ -533,7 +540,7 @@ impl LLMProvider for OpenAICompatibleProvider {
         // We use the owned-payload variant so the returned stream does
         // not need to borrow `payload` (and outlive it).
         let text_stream = self.stream_text_chunks_owned(payload);
-        let mapped = text_stream.map(|chunk| Ok::<_, ProviderError>(chunk));
+        let mapped = text_stream.map(Ok::<_, ProviderError>);
         Ok(Box::new(Box::pin(mapped)))
     }
 }
@@ -544,11 +551,9 @@ impl LLMProvider for OpenAICompatibleProvider {
 
 /// Splits the supplied `attachment_url` into `(attachment_id, raw_url)`.
 pub fn split_attachment_url(attachment_url: &str) -> Option<(String, String)> {
-    if let Some(stripped) = attachment_url.strip_prefix(ATTACHMENT_URL_PREFIX) {
-        Some((stripped.to_string(), attachment_url.to_string()))
-    } else {
-        None
-    }
+    attachment_url
+        .strip_prefix(ATTACHMENT_URL_PREFIX)
+        .map(|stripped| (stripped.to_string(), attachment_url.to_string()))
 }
 
 /// Builds an `ImageUrlPayload` from a URL string, used by callers that

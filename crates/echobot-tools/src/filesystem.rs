@@ -1151,8 +1151,8 @@ fn glob_char_match(text: &[u8], pattern: &[u8]) -> bool {
     let mut prev = vec![false; pattern.len() + 1];
     for &c in text {
         std::mem::swap(&mut dp, &mut prev);
-        for j in 0..=pattern.len() {
-            dp[j] = false;
+        for cell in dp.iter_mut().take(pattern.len() + 1) {
+            *cell = false;
         }
         for (j, &p) in pattern.iter().enumerate() {
             if p == b'*' {
@@ -1170,4 +1170,257 @@ fn glob_char_match(text: &[u8], pattern: &[u8]) -> bool {
 #[allow(dead_code)]
 fn _silence_optional_string_unused() {
     let _ = optional_string(&Value::Null, "k", "default");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::BaseTool;
+    use serde_json::json;
+    use std::fs as stdfs;
+
+    fn write_file(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        stdfs::write(&path, body).expect("write file");
+        path
+    }
+
+    #[tokio::test]
+    async fn list_directory_lists_tempdir_contents() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_file(tmp.path(), "alpha.txt", "alpha");
+        write_file(tmp.path(), "beta.txt", "beta");
+        stdfs::create_dir_all(tmp.path().join("subdir")).expect("mkdir");
+
+        let tool = ListDirectoryTool::new(tmp.path());
+        let result = tool.run(json!({})).await.expect("list_directory ok");
+        let entries = result
+            .data
+            .get("entries")
+            .and_then(Value::as_array)
+            .expect("entries array");
+        let names: Vec<String> = entries
+            .iter()
+            .filter_map(|e| e.get("name").and_then(Value::as_str).map(String::from))
+            .collect();
+        assert!(names.iter().any(|n| n == "alpha.txt"));
+        assert!(names.iter().any(|n| n == "beta.txt"));
+        assert!(names.iter().any(|n| n == "subdir"));
+    }
+
+    #[tokio::test]
+    async fn read_text_file_reads_written_content() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let body = "hello, world\nline two\n";
+        write_file(tmp.path(), "greeting.txt", body);
+
+        let tool = ReadTextFileTool::new(tmp.path());
+        let result = tool
+            .run(json!({ "path": "greeting.txt" }))
+            .await
+            .expect("read ok");
+        let content = result
+            .data
+            .get("content")
+            .and_then(Value::as_str)
+            .expect("content string");
+        assert_eq!(content, body);
+        assert_eq!(
+            result.data.get("truncated").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn read_text_file_truncates_long_content() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let body = "x".repeat(200);
+        write_file(tmp.path(), "long.txt", &body);
+
+        let tool = ReadTextFileTool::new(tmp.path());
+        let result = tool
+            .run(json!({ "path": "long.txt", "max_chars": 50 }))
+            .await
+            .expect("read ok");
+        let content = result
+            .data
+            .get("content")
+            .and_then(Value::as_str)
+            .expect("content");
+        assert_eq!(content.chars().count(), 50);
+        assert_eq!(
+            result.data.get("truncated").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn write_text_file_writes_and_creates_parents() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = WriteTextFileTool::new(tmp.path(), true);
+        let result = tool
+            .run(json!({ "path": "nested/dir/hello.txt", "content": "hi" }))
+            .await
+            .expect("write ok");
+        let path = result
+            .data
+            .get("path")
+            .and_then(Value::as_str)
+            .expect("path");
+        assert!(path.ends_with("nested/dir/hello.txt"));
+        let on_disk = stdfs::read_to_string(tmp.path().join("nested/dir/hello.txt"))
+            .expect("file should exist");
+        assert_eq!(on_disk, "hi");
+    }
+
+    #[tokio::test]
+    async fn write_text_file_rejects_overwrite_when_disabled() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_file(tmp.path(), "preexisting.txt", "old");
+        let tool = WriteTextFileTool::new(tmp.path(), true);
+        let err = tool
+            .run(json!({ "path": "preexisting.txt", "content": "new" }))
+            .await
+            .expect_err("overwrite=false should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("exists"), "unexpected error: {msg}");
+    }
+
+    #[tokio::test]
+    async fn write_text_file_blocks_when_writes_disabled() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = WriteTextFileTool::new(tmp.path(), false);
+        let err = tool
+            .run(json!({ "path": "x.txt", "content": "y" }))
+            .await
+            .expect_err("writes disabled should fail");
+        assert!(err.to_string().contains("禁用"));
+    }
+
+    #[tokio::test]
+    async fn edit_text_file_replaces_single_occurrence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_file(tmp.path(), "f.txt", "hello world\nhello there\n");
+        let tool = EditTextFileTool::new(tmp.path(), true);
+        let result = tool
+            .run(json!({
+                "path": "f.txt",
+                "operation": "replace",
+                "old_text": "hello world",
+                "new_text": "hi world",
+            }))
+            .await
+            .expect("edit ok");
+        assert_eq!(
+            result.data.get("replacements").and_then(Value::as_i64),
+            Some(1)
+        );
+        let on_disk = stdfs::read_to_string(tmp.path().join("f.txt")).expect("read");
+        assert_eq!(on_disk, "hi world\nhello there\n");
+    }
+
+    #[tokio::test]
+    async fn edit_text_file_creates_when_create_if_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = EditTextFileTool::new(tmp.path(), true);
+        tool.run(json!({
+            "path": "new.txt",
+            "operation": "append",
+            "new_text": "first line",
+            "create_if_missing": true,
+        }))
+        .await
+        .expect("edit should create file");
+        let on_disk = stdfs::read_to_string(tmp.path().join("new.txt")).expect("read");
+        assert_eq!(on_disk, "first line");
+    }
+
+    #[tokio::test]
+    async fn search_text_in_files_finds_needle() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_file(tmp.path(), "a.txt", "the quick brown fox\njumps over\n");
+        write_file(tmp.path(), "b.txt", "no needle here\n");
+
+        let tool = SearchTextInFilesTool::new(tmp.path());
+        let result = tool
+            .run(json!({ "query": "brown" }))
+            .await
+            .expect("search ok");
+        let matches = result
+            .data
+            .get("matches")
+            .and_then(Value::as_array)
+            .expect("matches array");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matches[0]
+                .get("line")
+                .and_then(Value::as_str)
+                .expect("line text"),
+            "the quick brown fox"
+        );
+        assert_eq!(
+            matches[0]
+                .get("line_number")
+                .and_then(Value::as_i64)
+                .expect("line number"),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn search_files_finds_glob_match() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_file(tmp.path(), "alpha.rs", "fn a() {}");
+        write_file(tmp.path(), "beta.txt", "txt");
+        write_file(tmp.path(), "gamma.rs", "fn b() {}");
+
+        let tool = SearchFilesTool::new(tmp.path());
+        let result = tool
+            .run(json!({ "pattern": "*.rs" }))
+            .await
+            .expect("search_files ok");
+        let matches = result
+            .data
+            .get("matches")
+            .and_then(Value::as_array)
+            .expect("matches");
+        let names: Vec<String> = matches
+            .iter()
+            .filter_map(|m| m.get("path").and_then(Value::as_str).map(String::from))
+            .collect();
+        assert!(names.iter().any(|p| p.ends_with("alpha.rs")));
+        assert!(names.iter().any(|p| p.ends_with("gamma.rs")));
+        assert!(
+            !names.iter().any(|p| p.ends_with("beta.txt")),
+            "glob *.rs should not match txt files, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn glob_matcher_handles_wildcards() {
+        assert!(match_glob("foo.txt", "*.txt"));
+        assert!(match_glob("src/lib.rs", "**/*.rs"));
+        assert!(match_glob("a/b/c.txt", "a/**/*.txt"));
+        assert!(!match_glob("foo.txt", "*.rs"));
+    }
+
+    #[test]
+    fn workspace_tool_resolves_inside_workspace() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_file(tmp.path(), "x.txt", "hi");
+        let tool = WorkspaceTool::new(tmp.path());
+        let resolved = tool.resolve_workspace_path("x.txt").expect("resolve");
+        assert!(resolved.ends_with("x.txt"));
+    }
+
+    #[test]
+    fn workspace_tool_rejects_escape() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tool = WorkspaceTool::new(tmp.path());
+        let err = tool
+            .resolve_workspace_path("../escape.txt")
+            .expect_err("escape should fail");
+        assert!(err.contains("outside") || err.contains("exist"));
+    }
 }

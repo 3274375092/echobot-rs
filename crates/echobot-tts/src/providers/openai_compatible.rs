@@ -8,11 +8,11 @@
 //!
 //! The provider is configured with:
 //! * `api_key`        — Bearer token. `"EMPTY"` is allowed for local
-//!                      servers (e.g. llama.cpp, vllm).
+//!   servers (e.g. llama.cpp, vllm).
 //! * `base_url`       — e.g. `"https://api.openai.com/v1"`.
 //! * `model`          — required.
 //! * `response_format` — one of `mp3 | opus | aac | flac | wav | pcm`.
-//!                       Defaults to `"wav"` (matches the Python port).
+//!   Defaults to `"wav"` (matches the Python port).
 //! * `default_voice`  — voice short name. Defaults to `"alloy"`.
 //! * `instructions`   — optional system-style instruction for the model.
 //! * `extra_body`     — extra JSON keys merged into the request body.

@@ -529,7 +529,7 @@ pub fn message_from_dict(data: &Map<String, Value>) -> LLMMessage {
 
     let content = data
         .get("content")
-        .map(|v| echobot_core::models::normalize_message_content(v))
+        .map(echobot_core::models::normalize_message_content)
         .unwrap_or_default();
 
     let name = read_optional_text(data.get("name"));

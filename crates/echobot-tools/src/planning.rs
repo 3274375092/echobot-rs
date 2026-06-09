@@ -229,7 +229,7 @@ impl BaseTool for RequestUserInputTool {
             data: json!({
                 "title": "Waiting for user input",
                 "summary": prompt,
-                "details": user_input_details(&prompt, &choices, &why_needed),
+                "details": user_input_details(prompt, &choices, &why_needed),
                 "request": pending_request,
             }),
         };
@@ -345,4 +345,107 @@ fn user_input_details(prompt: &str, choices: &[String], why_needed: &str) -> Str
         lines.push(why_needed.to_string());
     }
     lines.join("\n").trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::BaseTool;
+    use serde_json::json;
+
+    #[test]
+    fn planning_tools_construct_with_default_args() {
+        let plan = UpdatePlanTool::new();
+        assert_eq!(plan.name(), "update_plan");
+        let params = plan.parameters();
+        assert_eq!(params["type"], "object");
+        assert_eq!(params["required"][0], "plan");
+
+        let ask = RequestUserInputTool::new();
+        assert_eq!(ask.name(), "request_user_input");
+        let params = ask.parameters();
+        assert_eq!(params["required"][0], "prompt");
+    }
+
+    #[tokio::test]
+    async fn update_plan_emits_trace_event() {
+        let tool = UpdatePlanTool::new();
+        let result = tool
+            .run(json!({
+                "explanation": "kickoff",
+                "plan": [
+                    { "step": "draft", "status": "in_progress" },
+                    { "step": "review", "status": "pending" }
+                ]
+            }))
+            .await
+            .expect("update_plan ok");
+        assert_eq!(result.data["kind"], "plan_update");
+        assert_eq!(
+            result.data["current_step"].as_str(),
+            Some("draft"),
+            "in_progress step should be the current step"
+        );
+        assert_eq!(result.trace_events.len(), 1);
+        assert_eq!(result.trace_events[0].event, "plan_updated");
+    }
+
+    #[tokio::test]
+    async fn update_plan_rejects_multiple_in_progress() {
+        let tool = UpdatePlanTool::new();
+        let err = tool
+            .run(json!({
+                "plan": [
+                    { "step": "a", "status": "in_progress" },
+                    { "step": "b", "status": "in_progress" }
+                ]
+            }))
+            .await
+            .expect_err("two in_progress should fail");
+        assert!(err.to_string().contains("in_progress"));
+    }
+
+    #[tokio::test]
+    async fn update_plan_rejects_empty_plan() {
+        let tool = UpdatePlanTool::new();
+        let err = tool
+            .run(json!({ "plan": [] }))
+            .await
+            .expect_err("empty plan should fail");
+        assert!(err.to_string().contains("non-empty"));
+    }
+
+    #[tokio::test]
+    async fn request_user_input_pauses_loop_with_control_signal() {
+        let tool = RequestUserInputTool::new();
+        let result = tool
+            .run(json!({
+                "prompt": "Which framework should we use?",
+                "choices": ["react", "vue", "svelte"],
+                "why_needed": "Need a frontend framework"
+            }))
+            .await
+            .expect("request_user_input ok");
+        let control = result
+            .control
+            .as_ref()
+            .expect("expected a loop-control signal");
+        assert_eq!(control.action, "await_user_input");
+        assert_eq!(control.status, "waiting_for_input");
+        let trace = result
+            .trace_events
+            .first()
+            .expect("expected a trace event");
+        assert_eq!(trace.event, "user_input_requested");
+    }
+
+    #[tokio::test]
+    async fn request_user_input_requires_prompt() {
+        let tool = RequestUserInputTool::new();
+        let err = tool
+            .run(json!({}))
+            .await
+            .expect_err("missing prompt should fail");
+        assert!(err.to_string().contains("prompt"));
+    }
 }

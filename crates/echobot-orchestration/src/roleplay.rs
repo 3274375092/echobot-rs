@@ -131,7 +131,13 @@ pub type StreamCallback = Arc<dyn Fn(String) -> futures::future::BoxFuture<'stat
 
 /// Lightweight LLM wrapper for the roleplay layer. Mirrors the Python
 /// `AgentCore.ask` / `AgentCore.ask_stream` pair.
+///
+/// The method signatures mirror the Python `AgentCore` 1:1, so each
+/// `ask*` method necessarily takes a long argument list; the
+/// `too_many_arguments` lint is intentionally suppressed on the trait
+/// to keep the call sites trivially comparable between ports.
 #[async_trait::async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait RoleplayLlm: Send + Sync {
     /// One-shot, non-streaming ask.
     async fn ask(
@@ -452,6 +458,10 @@ impl RoleplayEngine {
     }
 
     /// Presents a freshly-scheduled cron job.
+    ///
+    /// The argument list mirrors the Python helper 1:1; the
+    /// `too_many_arguments` lint is intentionally suppressed.
+    #[allow(clippy::too_many_arguments)]
     pub async fn present_scheduled_setup_result(
         &self,
         session: &ChatSession,
@@ -545,6 +555,10 @@ impl RoleplayEngine {
         .await
     }
 
+    /// Runs the lightweight roleplay pass. Mirrors the Python
+    /// `RoleplayEngine.run` 1:1; the `too_many_arguments` lint is
+    /// intentionally suppressed.
+    #[allow(clippy::too_many_arguments)]
     async fn run(
         &self,
         session: &ChatSession,
@@ -619,6 +633,10 @@ impl RoleplayEngine {
         }
     }
 
+    /// Streaming variant of [`RoleplayEngine::run`]. Mirrors the Python
+    /// `RoleplayEngine.run_stream` 1:1; the `too_many_arguments` lint is
+    /// intentionally suppressed.
+    #[allow(clippy::too_many_arguments)]
     async fn run_stream(
         &self,
         session: &ChatSession,

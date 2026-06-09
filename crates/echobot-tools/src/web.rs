@@ -611,3 +611,118 @@ fn looks_like_binary(raw_content: &[u8]) -> bool {
         .count();
     control_bytes > std::cmp::max(8, preview.len() / 10)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::BaseTool;
+    use serde_json::json;
+
+    #[test]
+    fn build_request_url_preserves_input() {
+        // `normalize_web_url` is a thin pass-through; verify the
+        // tool's URL handling round-trips a few public URLs.
+        for url in [
+            "https://example.com/page?x=1",
+            "http://example.org/path",
+            "https://api.github.com/repos/foo/bar",
+        ] {
+            assert_eq!(normalize_web_url(url), url);
+        }
+    }
+
+    #[test]
+    fn validate_web_url_accepts_public_https() {
+        validate_web_url("https://example.com/", false).expect("public https ok");
+    }
+
+    #[test]
+    fn validate_web_url_rejects_non_http_schemes() {
+        let err = validate_web_url("ftp://example.com/", false).expect_err("ftp not allowed");
+        assert!(err.contains("http"));
+    }
+
+    #[test]
+    fn validate_web_url_rejects_localhost_when_private_disallowed() {
+        let err = validate_web_url("http://localhost/", false).expect_err("loopback rejected");
+        assert!(err.to_lowercase().contains("private") || err.contains("resolve"));
+    }
+
+    #[test]
+    fn validate_web_url_allows_loopback_when_private_enabled() {
+        validate_web_url("http://127.0.0.1/", true).expect("loopback allowed with flag");
+    }
+
+    #[test]
+    fn validate_web_url_rejects_invalid_url() {
+        let err = validate_web_url("not a url", false).expect_err("invalid url");
+        assert!(err.contains("invalid url") || err.contains("url"));
+    }
+
+    #[test]
+    fn web_request_tool_metadata_is_well_formed() {
+        let tool = WebRequestTool::new(false);
+        assert_eq!(tool.name(), "fetch_web_page");
+        let params = tool.parameters();
+        assert_eq!(params["type"], "object");
+        let required = params["required"].as_array().expect("required array");
+        assert!(required.iter().any(|v| v == "url"));
+    }
+
+    #[test]
+    fn web_request_tool_with_private_network_flag() {
+        let tool = WebRequestTool::new(true);
+        assert_eq!(tool.name(), "fetch_web_page");
+    }
+
+    #[tokio::test]
+    async fn web_request_tool_rejects_invalid_url() {
+        let tool = WebRequestTool::new(false);
+        let err = tool
+            .run(json!({ "url": "ftp://example.com/" }))
+            .await
+            .expect_err("ftp must be rejected");
+        assert!(err.to_string().contains("http"));
+    }
+
+    #[tokio::test]
+    async fn web_request_tool_rejects_loopback_when_disabled() {
+        let tool = WebRequestTool::new(false);
+        let err = tool
+            .run(json!({ "url": "http://localhost/" }))
+            .await
+            .expect_err("loopback should be rejected");
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn extract_charset_parses_common_values() {
+        assert_eq!(
+            extract_charset_from_content_type("text/html; charset=utf-8").as_deref(),
+            Some("utf-8")
+        );
+        assert_eq!(
+            extract_charset_from_content_type("text/plain;charset=US-ASCII").as_deref(),
+            Some("US-ASCII")
+        );
+        assert!(extract_charset_from_content_type("text/plain").is_none());
+    }
+
+    #[test]
+    fn looks_like_html_detects_tags() {
+        assert!(looks_like_html(b"<!DOCTYPE html><html><body>x"));
+        assert!(looks_like_html(b"<html><head></head>"));
+        assert!(!looks_like_html(b"hello world"));
+    }
+
+    #[test]
+    fn is_text_content_type_handles_known_types() {
+        assert!(is_text_content_type("text/html"));
+        assert!(is_text_content_type("text/plain"));
+        assert!(is_text_content_type("application/xml"));
+        assert!(is_text_content_type("text/xml"));
+        assert!(is_text_content_type("application/javascript"));
+        assert!(!is_text_content_type("image/png"));
+        assert!(!is_text_content_type("application/octet-stream"));
+    }
+}

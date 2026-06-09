@@ -13,9 +13,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::base::{
-    TtsAudio, TtsError, TtsProvider, TtsProviderStatus, TtsSynthesisOptions, VoiceOption,
-};
+use crate::base::{TtsAudio, TtsError, TtsProvider, TtsProviderStatus, VoiceOption};
+#[cfg(test)]
+use crate::base::TtsSynthesisOptions;
 use crate::synthesis::build_tts_synthesis_options;
 use crate::text::normalize_text_for_tts;
 
@@ -244,8 +244,7 @@ mod tests {
         let err = svc
             .synthesize("```python\n```", None, None, None, None, None)
             .await
-            .err()
-            .expect("empty after normalize");
+            .expect_err("empty after normalize");
         match err {
             TtsError::InvalidArgument(msg) => assert!(msg.contains("empty")),
             other => panic!("expected InvalidArgument, got {other:?}"),

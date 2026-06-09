@@ -40,10 +40,11 @@ impl MessageRole {
 }
 
 /// Which field the provider uses to surface reasoning text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningField {
     /// `reasoning_content` (DeepSeek-style).
+    #[default]
     ReasoningContent,
     /// `reasoning` (Anthropic-style).
     Reasoning,
@@ -64,12 +65,6 @@ impl ReasoningField {
             "reasoning" => ReasoningField::Reasoning,
             _ => ReasoningField::ReasoningContent,
         }
-    }
-}
-
-impl Default for ReasoningField {
-    fn default() -> Self {
-        ReasoningField::ReasoningContent
     }
 }
 

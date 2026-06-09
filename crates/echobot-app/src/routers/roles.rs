@@ -1,6 +1,5 @@
 //! `roles` router — list / get / create / update / delete role cards.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
@@ -37,7 +36,10 @@ fn summary(card: &RoleCard) -> RoleSummaryModel {
         name: card.name.clone(),
         editable: !is_default,
         deletable: !is_default,
-        source_path: card.source_path.as_ref().map(path_to_string),
+        source_path: card
+            .source_path
+            .as_ref()
+            .map(|p| path_to_string(p.as_path())),
     }
 }
 
@@ -52,13 +54,16 @@ fn detail(card: &RoleCard) -> RoleDetailModel {
     }
 }
 
-fn path_to_string(p: &PathBuf) -> String {
+fn path_to_string(p: &std::path::Path) -> String {
     p.display().to_string()
 }
 
+// Kept for future use: per-handler error mapping is currently inlined at
+// each call site, but we still want a single place to classify role
+// error strings into `AppError` when a future handler needs it.
+#[allow(dead_code)]
 fn classify_role_error(err: &str) -> AppError {
     let _ = err;
-    // Replaced by per-handler error mapping; kept for future use.
     AppError::BadRequest("unsupported".to_string())
 }
 

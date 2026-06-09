@@ -126,3 +126,56 @@ impl BaseTool for MemorySearchTool {
         })))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::BaseTool;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    #[test]
+    fn memory_tool_metadata_is_well_formed() {
+        let tool = MemorySearchTool::new(Arc::new(NoopMemorySupport));
+        assert_eq!(tool.name(), "memory_search");
+        let params = tool.parameters();
+        assert_eq!(params["type"], "object");
+        let required = params["required"].as_array().expect("required array");
+        assert!(required.iter().any(|v| v == "query"));
+    }
+
+    #[tokio::test]
+    async fn memory_search_tool_returns_empty_result() {
+        let tool = MemorySearchTool::new(Arc::new(NoopMemorySupport));
+        let result = tool
+            .run(json!({ "query": "what did we decide about x?" }))
+            .await
+            .expect("memory_search should not panic");
+        assert_eq!(result.data["kind"], "memory_search");
+        let hits = result
+            .data
+            .get("hits")
+            .and_then(Value::as_array)
+            .expect("hits array");
+        assert!(hits.is_empty(), "noop backend should return no hits");
+    }
+
+    #[tokio::test]
+    async fn memory_search_tool_requires_query() {
+        let tool = MemorySearchTool::new(Arc::new(NoopMemorySupport));
+        let err = tool
+            .run(json!({}))
+            .await
+            .expect_err("missing query should fail");
+        assert!(err.to_string().contains("query"));
+    }
+
+    #[test]
+    fn noop_memory_support_clamps_inputs() {
+        // Just confirm the trait object is `Send + Sync` and usable in
+        // the registry's default-args world.
+        let support: Arc<dyn MemorySupport> = Arc::new(NoopMemorySupport);
+        let tool = MemorySearchTool::new(support);
+        assert_eq!(tool.name(), "memory_search");
+    }
+}

@@ -309,9 +309,9 @@ pub async fn read_or_create_heartbeat_file(heartbeat_file: &Path) -> Result<Stri
         write_heartbeat_file(heartbeat_file, DEFAULT_HEARTBEAT_TEMPLATE).await?;
         return Ok(DEFAULT_HEARTBEAT_TEMPLATE.to_string());
     }
-    Ok(tokio::fs::read_to_string(heartbeat_file)
+    tokio::fs::read_to_string(heartbeat_file)
         .await
-        .map_err(|e| Error::HeartbeatFile(e.to_string()))?)
+        .map_err(|e| Error::HeartbeatFile(e.to_string()))
 }
 
 /// Writes `content` to `heartbeat_file` (creating parents as needed).

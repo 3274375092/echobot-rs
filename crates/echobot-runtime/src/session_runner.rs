@@ -317,7 +317,6 @@ impl SessionAgentRunner {
             let store = store.clone();
             let session = session.clone();
             let run = run.clone();
-            let event = event;
             let data_value = data;
             let mut data_map = serde_json::Map::new();
             if let serde_json::Value::Object(map) = data_value {

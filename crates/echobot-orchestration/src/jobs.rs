@@ -138,6 +138,11 @@ impl ConversationJobStore {
     }
 
     /// Creates a new job.
+    ///
+    /// The argument list mirrors the Python
+    /// `ConversationJobStore.create` helper 1:1; the `too_many_arguments`
+    /// lint is suppressed intentionally.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         session_name: impl Into<String>,
@@ -498,7 +503,7 @@ mod tests {
         let snapshot = store.get(&job.job_id).await.unwrap();
         assert_eq!(snapshot.status, "completed");
         assert_eq!(snapshot.steps, 3);
-        assert!(job_can_retry(&job) == false);
+        assert!(!job_can_retry(&job));
     }
 
     #[tokio::test]
