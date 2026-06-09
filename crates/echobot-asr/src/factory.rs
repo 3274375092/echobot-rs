@@ -209,7 +209,29 @@ pub fn build_default_asr_service(workspace: &Path) -> AsrService {
         .selected_asr(selected_asr)
         .selected_vad(selected_vad)
         .build()
-        .expect("ASR service should build with default providers")
+        .unwrap_or_else(|e| {
+            // The factory should never panic — degrade to a stub
+            // service that just has the openai provider and no
+            // selected defaults. Users can still transcribe
+            // through the HTTP layer once we re-attach the
+            // providers at runtime. This used to be `.expect()`,
+            // which crashed the desktop binary when the VAD
+            // selection was misconfigured.
+            eprintln!(
+                "echobot-asr: factory build failed ({e}); falling back to a stub service with the openai provider only"
+            );
+            AsrServiceBuilder::new()
+                .sample_rate(sample_rate)
+                .with_asr_provider(
+                    "openai-transcriptions",
+                    Arc::new(build_default_openai_provider())
+                        as Arc<dyn crate::base::AsrProvider>,
+                )
+                .selected_asr("openai-transcriptions")
+                .selected_vad(None)
+                .build()
+                .expect("openai-only fallback should always build")
+        })
 }
 
 #[cfg(test)]
