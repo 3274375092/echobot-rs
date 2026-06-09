@@ -18,3 +18,8 @@ reqwest = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
+regex = { workspace = true }
+async-stream = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

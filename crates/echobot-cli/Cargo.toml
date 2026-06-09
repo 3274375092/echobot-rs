@@ -13,6 +13,9 @@ path = "src/main.rs"
 echobot-core = { path = "../echobot-core" }
 echobot-runtime = { path = "../echobot-runtime" }
 echobot-orchestration = { path = "../echobot-orchestration" }
+echobot-providers = { path = "../echobot-providers" }
+echobot-tools = { path = "../echobot-tools" }
+echobot-skill = { path = "../echobot-skill" }
 
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -20,3 +23,10 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 dotenvy = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }

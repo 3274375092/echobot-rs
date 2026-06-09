@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 echobot-core = { path = "../echobot-core" }
+echobot-tools = { path = "../echobot-tools" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -15,3 +16,5 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+once_cell = { workspace = true }
+regex = { workspace = true }

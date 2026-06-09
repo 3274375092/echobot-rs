@@ -15,5 +15,10 @@ uuid = { workspace = true }
 bytes = { workspace = true }
 base64 = { workspace = true }
 mime = { workspace = true }
+mime_guess = "2"
+sha2 = "0.10"
 tokio = { workspace = true }
 async-trait = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]

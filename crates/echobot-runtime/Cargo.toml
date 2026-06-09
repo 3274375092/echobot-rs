@@ -8,8 +8,6 @@ rust-version.workspace = true
 [dependencies]
 echobot-core = { path = "../echobot-core" }
 echobot-providers = { path = "../echobot-providers" }
-echobot-tools = { path = "../echobot-tools" }
-echobot-skill = { path = "../echobot-skill" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,3 +20,5 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 dashmap = { workspace = true }
 dotenvy = { workspace = true }
+regex = { workspace = true }
+futures = { workspace = true }
